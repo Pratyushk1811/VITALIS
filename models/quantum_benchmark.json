@@ -1,0 +1,18 @@
+{
+    "model": "Quantum Kernel SVM",
+    "features": [
+        "cp",
+        "thal",
+        "thalach",
+        "oldpeak",
+        "ca",
+        "age"
+    ],
+    "n_qubits": 6,
+    "accuracy": 0.8333,
+    "precision": 0.9091,
+    "sensitivity": 0.7143,
+    "specificity": 0.9375,
+    "f1_score": 0.8,
+    "roc_auc": 0.9286
+}

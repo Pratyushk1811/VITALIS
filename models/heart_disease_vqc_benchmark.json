@@ -1,0 +1,29 @@
+{
+    "model": "Variational Quantum Classifier",
+    "version": "V2",
+    "dataset": "UCI Cleveland Heart Disease",
+    "selected_features": [
+        "cp",
+        "thal",
+        "thalach",
+        "oldpeak",
+        "ca",
+        "age"
+    ],
+    "features": 6,
+    "n_qubits": 6,
+    "reuploading_layers": 3,
+    "trainable_parameters": 36,
+    "epochs": 50,
+    "batch_size": 32,
+    "learning_rate": 0.01,
+    "test_size": 0.2,
+    "random_state": 42,
+    "accuracy": 0.7833,
+    "precision": 0.8571,
+    "sensitivity": 0.6429,
+    "specificity": 0.9062,
+    "f1_score": 0.7347,
+    "roc_auc": 0.7595,
+    "training_time_seconds": 145.8023
+}

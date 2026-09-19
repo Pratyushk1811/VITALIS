@@ -1,0 +1,17 @@
+{
+    "model": "Quantum Kernel SVM",
+    "dataset": "Breast Cancer Wisconsin Diagnostic",
+    "features": 30,
+    "n_qubits": 6,
+    "reuploading_layers": 5,
+    "accuracy": 0.9737,
+    "precision": 0.9756,
+    "sensitivity": 0.9524,
+    "specificity": 0.9861,
+    "f1_score": 0.9639,
+    "roc_auc": 0.9894,
+    "train_state_time_seconds": 0.7173,
+    "test_state_time_seconds": 0.1749,
+    "train_kernel_time_seconds": 0.0031,
+    "test_kernel_time_seconds": 0.0003
+}

@@ -1,0 +1,26 @@
+{
+    "Logistic Regression": {
+        "accuracy": 0.85,
+        "precision": 0.88,
+        "sensitivity": 0.7857,
+        "specificity": 0.9062,
+        "f1_score": 0.8302,
+        "roc_auc": 0.942
+    },
+    "Random Forest": {
+        "accuracy": 0.8333,
+        "precision": 0.8462,
+        "sensitivity": 0.7857,
+        "specificity": 0.875,
+        "f1_score": 0.8148,
+        "roc_auc": 0.9403
+    },
+    "RBF SVM": {
+        "accuracy": 0.8667,
+        "precision": 0.9167,
+        "sensitivity": 0.7857,
+        "specificity": 0.9375,
+        "f1_score": 0.8462,
+        "roc_auc": 0.9475
+    }
+}

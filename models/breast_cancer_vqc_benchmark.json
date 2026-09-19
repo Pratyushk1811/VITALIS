@@ -1,0 +1,17 @@
+{
+    "model": "Variational Quantum Classifier",
+    "dataset": "Breast Cancer Wisconsin Diagnostic",
+    "features": 30,
+    "n_qubits": 6,
+    "reuploading_layers": 5,
+    "trainable_parameters": 60,
+    "epochs": 30,
+    "batch_size": 32,
+    "accuracy": 0.9474,
+    "precision": 0.9737,
+    "sensitivity": 0.881,
+    "specificity": 0.9861,
+    "f1_score": 0.925,
+    "roc_auc": 0.9911,
+    "training_time_seconds": 285.6784
+}

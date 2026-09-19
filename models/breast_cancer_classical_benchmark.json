@@ -1,0 +1,33 @@
+{
+    "dataset": "Breast Cancer Wisconsin Diagnostic",
+    "features": 30,
+    "train_samples": 455,
+    "test_samples": 114,
+    "random_state": 42,
+    "models": {
+        "logistic_regression": {
+            "accuracy": 0.9649,
+            "precision": 0.975,
+            "sensitivity": 0.9286,
+            "specificity": 0.9861,
+            "f1_score": 0.9512,
+            "roc_auc": 0.996
+        },
+        "random_forest": {
+            "accuracy": 0.9649,
+            "precision": 1.0,
+            "sensitivity": 0.9048,
+            "specificity": 1.0,
+            "f1_score": 0.95,
+            "roc_auc": 0.9942
+        },
+        "rbf_svm": {
+            "accuracy": 0.9737,
+            "precision": 1.0,
+            "sensitivity": 0.9286,
+            "specificity": 1.0,
+            "f1_score": 0.963,
+            "roc_auc": 0.9947
+        }
+    }
+}

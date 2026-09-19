@@ -1,0 +1,1094 @@
+:root{
+  --screen-bg:#fff;
+  --screen-text:#172033;
+  --screen-muted:#687386;
+  --screen-line:#e5e8ed;
+  --screen-soft:#f7f8fa;
+  --screen-blue:#2457d6;
+  --screen-green:#197a4b;
+  --screen-red:#b42318;
+}
+
+.screening-page{
+  min-height:100vh;
+  background:var(--screen-bg);
+  color:var(--screen-text);
+  font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+.screening-page *{
+  box-sizing:border-box;
+}
+
+.screening-page button,
+.screening-page input,
+.screening-page select{
+  font:inherit;
+}
+
+.screening-page button{
+  cursor:pointer;
+}
+
+.screening-hidden{
+  display:none!important;
+}
+
+.screening-header{
+  height:56px;
+  border-bottom:1px solid var(--screen-line);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 28px;
+  position:sticky;
+  top:0;
+  background:#fff;
+  z-index:10;
+}
+
+.screening-brand{
+  font-weight:700;
+  letter-spacing:-.02em;
+}
+
+.screening-back{
+  color:var(--screen-muted);
+  text-decoration:none;
+  font-size:13px;
+  cursor:pointer;
+}
+
+.screening-back:hover{
+  color:var(--screen-text);
+}
+
+.screening-main{
+  max-width:1080px;
+  margin:0 auto;
+  padding:34px 28px 64px;
+}
+
+.screening-page h1{
+  font-size:24px;
+  line-height:1.2;
+  margin:0 0 5px;
+  letter-spacing:-.025em;
+}
+
+.screening-page h2{
+  font-size:15px;
+  margin:0;
+  font-weight:650;
+}
+
+.screening-page h3{
+  font-size:12px;
+  margin:0;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  color:#4e596b;
+}
+
+.screening-intro{
+  padding-bottom:22px;
+  border-bottom:1px solid var(--screen-line);
+}
+
+.screening-intro p{
+  margin:0;
+  color:var(--screen-muted);
+  max-width:680px;
+}
+
+.screening-notice{
+  margin-top:14px;
+  padding:10px 12px;
+  border:1px solid var(--screen-line);
+  background:var(--screen-soft);
+  font-size:12px;
+  color:#5d6879;
+}
+
+.screening-section{
+  padding:24px 0;
+  border-bottom:1px solid var(--screen-line);
+}
+
+.screening-controls{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:18px;
+}
+
+.screening-field-label{
+  display:block;
+  font-size:12px;
+  font-weight:600;
+  margin-bottom:6px;
+}
+
+.screening-field small{
+  display:block;
+  color:var(--screen-muted);
+  font-size:11px;
+  margin-top:5px;
+}
+
+.screening-input,
+.screening-select{
+  width:100%;
+  height:38px;
+  padding:0 11px;
+  border:1px solid #cfd5dd;
+  border-radius:5px;
+  background:#fff;
+  color:var(--screen-text);
+  outline:none;
+}
+
+.screening-input:focus,
+.screening-select:focus{
+  border-color:var(--screen-blue);
+  box-shadow:0 0 0 2px rgba(36,87,214,.09);
+}
+
+.screening-tabs{
+  display:flex;
+  gap:0;
+  margin-top:8px;
+}
+
+.screening-tab{
+  height:36px;
+  padding:0 14px;
+  border:1px solid #cfd5dd;
+  background:#fff;
+  color:#5d6879;
+}
+
+.screening-tab:first-child{
+  border-radius:5px 0 0 5px;
+}
+
+.screening-tab:last-child{
+  border-radius:0 5px 5px 0;
+  border-left:0;
+}
+
+.screening-tab.active{
+  background:#f1f4f8;
+  color:var(--screen-text);
+  font-weight:600;
+}
+
+.screening-form-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:16px;
+}
+
+.screening-form-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:18px 22px;
+}
+
+.screening-key{
+  font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:#8a94a4;
+  margin-left:5px;
+  font-weight:400;
+}
+
+.screening-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-top:20px;
+}
+
+.screening-primary{
+  border:1px solid var(--screen-blue);
+  background:var(--screen-blue);
+  color:#fff;
+  border-radius:5px;
+  padding:9px 15px;
+  font-weight:600;
+  font-size:13px;
+}
+
+.screening-primary:hover{
+  background:#1e4bbd;
+}
+
+.screening-primary:disabled{
+  opacity:.6;
+  cursor:not-allowed;
+}
+
+.screening-secondary{
+  border:1px solid #cfd5dd;
+  background:#fff;
+  color:#394456;
+  border-radius:5px;
+  padding:9px 14px;
+  font-size:13px;
+}
+
+.screening-secondary:hover{
+  background:var(--screen-soft);
+}
+
+.screening-review{
+  margin-top:20px;
+  border:1px solid var(--screen-line);
+  background:var(--screen-soft);
+  border-radius:6px;
+  padding:16px;
+}
+
+.screening-review-table{
+  width:100%;
+  border-collapse:collapse;
+  background:#fff;
+  border:1px solid var(--screen-line);
+  font-size:12px;
+}
+
+.screening-review-table th,
+.screening-review-table td{
+  padding:9px 10px;
+  border-bottom:1px solid var(--screen-line);
+  text-align:left;
+}
+
+.screening-review-table th{
+  color:#5d6879;
+  font-weight:600;
+  background:#fafbfc;
+}
+
+.screening-upload{
+  border:1px dashed #bfc6d0;
+  padding:42px 20px;
+  text-align:center;
+  border-radius:6px;
+  background:#fafbfc;
+}
+
+.screening-upload strong{
+  display:block;
+  margin-bottom:5px;
+}
+
+.screening-upload span{
+  color:var(--screen-muted);
+  font-size:12px;
+}
+
+.screening-upload input{
+  display:none;
+}
+
+.screening-file-row{
+  margin-top:12px;
+  padding:12px;
+  border:1px solid var(--screen-line);
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  border-radius:5px;
+}
+
+.screening-file-row button{
+  border:0;
+  background:none;
+  color:var(--screen-red);
+  font-size:12px;
+}
+
+.screening-future{
+  margin-top:12px;
+  padding:12px;
+  background:var(--screen-soft);
+  border:1px solid var(--screen-line);
+  color:var(--screen-muted);
+  font-size:12px;
+}
+
+.screening-progress{
+  margin-top:18px;
+  border:1px solid #d8e1f7;
+  background:#f7f9ff;
+  padding:12px;
+  border-radius:5px;
+  color:#3155a6;
+  font-size:12px;
+}
+
+.screening-progress-line{
+  height:3px;
+  background:#dfe6f5;
+  margin-top:8px;
+  overflow:hidden;
+}
+
+.screening-progress-line div{
+  height:100%;
+  width:35%;
+  background:var(--screen-blue);
+  animation:screening-load 1.2s ease-in-out infinite;
+}
+
+@keyframes screening-load{
+  0%{transform:translateX(-120%)}
+  100%{transform:translateX(320%)}
+}
+
+.screening-results{
+  padding-top:28px;
+}
+
+.screening-result-top{
+  display:grid;
+  grid-template-columns:2fr 1fr;
+  gap:16px;
+}
+
+.screening-result-box,
+.screening-consensus,
+.screening-panel{
+  border:1px solid var(--screen-line);
+  border-radius:6px;
+  background:#fff;
+  padding:18px;
+}
+
+.screening-result-label{
+  font-size:18px;
+  font-weight:650;
+  margin-top:8px;
+}
+
+.screening-muted{
+  color:var(--screen-muted);
+}
+
+.screening-consensus-number{
+  font-size:24px;
+  font-weight:650;
+  margin-top:7px;
+}
+
+.screening-bar{
+  height:5px;
+  background:#edf0f3;
+  margin-top:10px;
+  border-radius:2px;
+  overflow:hidden;
+}
+
+.screening-bar div{
+  height:100%;
+  background:var(--screen-blue);
+  width:0;
+  transition:width .35s ease;
+}
+
+.screening-panel{
+  margin-top:16px;
+}
+
+.screening-table-wrap{
+  overflow:auto;
+}
+
+.screening-model-table,
+.screening-bench-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+
+.screening-model-table th,
+.screening-model-table td,
+.screening-bench-table th,
+.screening-bench-table td{
+  padding:10px;
+  border-bottom:1px solid var(--screen-line);
+  text-align:left;
+}
+
+.screening-model-table th,
+.screening-bench-table th{
+  color:#5d6879;
+  background:#fafbfc;
+  font-weight:600;
+}
+
+.screening-num{
+  text-align:right!important;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+
+.screening-badge{
+  font-size:11px;
+  padding:2px 6px;
+  border:1px solid var(--screen-line);
+  border-radius:3px;
+  color:#596476;
+}
+
+.screening-prompts{
+  display:flex;
+  gap:7px;
+  flex-wrap:wrap;
+  margin-top:12px;
+}
+
+.screening-prompt{
+  border:1px solid var(--screen-line);
+  background:#fff;
+  border-radius:4px;
+  padding:6px 9px;
+  font-size:11px;
+  color:#4f5a6b;
+}
+
+.screening-prompt:hover{
+  background:var(--screen-soft);
+}
+
+.screening-assistant{
+  display:flex;
+  gap:8px;
+  margin-top:12px;
+}
+
+.screening-assistant .screening-input{
+  height:36px;
+}
+
+.screening-answer{
+  margin-top:12px;
+  padding:12px;
+  background:var(--screen-soft);
+  border:1px solid var(--screen-line);
+  font-size:12px;
+  white-space:pre-wrap;
+}
+
+.screening-error{
+  margin-top:12px;
+  padding:10px 12px;
+  border:1px solid #f0c7c3;
+  background:#fff8f7;
+  color:var(--screen-red);
+  font-size:12px;
+}
+
+.screening-success{
+  color:var(--screen-green);
+}
+
+.screening-footer{
+  padding-top:24px;
+  margin-top:28px;
+  border-top:1px solid var(--screen-line);
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  color:var(--screen-muted);
+  font-size:12px;
+}
+
+@media(max-width:760px){
+  .screening-header{
+    padding:0 16px;
+  }
+
+  .screening-main{
+    padding:26px 16px 50px;
+  }
+
+  .screening-controls,
+  .screening-form-grid,
+  .screening-result-top{
+    grid-template-columns:1fr;
+  }
+
+  .screening-model-table,
+  .screening-bench-table{
+    min-width:760px;
+  }
+
+  .screening-panel{
+    overflow:hidden;
+  }
+
+  .screening-review-table{
+    min-width:700px;
+  }
+
+  .screening-review{
+    overflow:auto;
+  }
+
+  .screening-back{
+    font-size:12px;
+  }
+}
+
+
+/* ============================================================
+   VITALIS — MODEL & BENCHMARK TABLE REFINEMENT
+   UI ONLY — no screening logic affected
+   ============================================================ */
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #ffffff;
+  border: 1px solid #e3e7ee;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+thead th {
+  height: 46px;
+  padding: 0 18px;
+  background: #f8f9fb;
+  border-bottom: 1px solid #dfe4eb;
+  color: #596579;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  text-align: left;
+  white-space: nowrap;
+}
+
+tbody td {
+  height: 62px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e8ebf0;
+  color: #1d2738;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+tbody tr {
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+tbody tr:hover {
+  background: #fafbfc;
+}
+
+/* Model name */
+
+tbody td:first-child {
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+/* Numeric columns */
+
+.screening-num {
+  font-family:
+    "SFMono-Regular",
+    "SF Mono",
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #263247;
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+/* Classical / Quantum badge */
+
+.screening-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 3px 9px;
+  border: 1px solid #d9dee7;
+  border-radius: 999px;
+  background: #fafbfc;
+  color: #596579;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Prediction column */
+
+tbody td:nth-child(3) {
+  font-weight: 520;
+  color: #263247;
+}
+
+/* Give the model-output table slightly more compact rows */
+
+.screening-results table:first-of-type tbody td {
+  height: 58px;
+}
+
+/* Benchmark table */
+
+.screening-results table:last-of-type thead th {
+  height: 48px;
+}
+
+.screening-results table:last-of-type tbody td {
+  height: 56px;
+  font-size: 12px;
+}
+
+/* Keep benchmark numbers visually aligned */
+
+.screening-results table:last-of-type .screening-num {
+  letter-spacing: -0.015em;
+}
+
+/* Better horizontal rhythm */
+
+.screening-results table th:first-child,
+.screening-results table td:first-child {
+  padding-left: 20px;
+}
+
+.screening-results table th:last-child,
+.screening-results table td:last-child {
+  padding-right: 20px;
+}
+
+/* Responsive table container */
+
+.screening-results table {
+  min-width: 760px;
+}
+
+@media (max-width: 900px) {
+  .screening-results {
+    overflow-x: hidden;
+  }
+
+  .screening-results table {
+    min-width: 720px;
+  }
+}
+
+@media (max-width: 640px) {
+  .screening-results table {
+    min-width: 680px;
+  }
+
+  thead th {
+    padding: 0 14px;
+  }
+
+  tbody td {
+    padding: 10px 14px;
+  }
+}
+
+
+/* ============================================================
+   VITALIS — MODEL OUTPUT PROBABILITY VISUALIZATION
+   ============================================================ */
+
+.model-output-table {
+  table-layout: fixed;
+}
+
+.model-output-table th:nth-child(1) {
+  width: 22%;
+}
+
+.model-output-table th:nth-child(2) {
+  width: 13%;
+}
+
+.model-output-table th:nth-child(3) {
+  width: 20%;
+}
+
+.model-output-table th:nth-child(4) {
+  width: 45%;
+}
+
+.model-output-row td {
+  height: 76px;
+}
+
+.model-output-name {
+  white-space: nowrap;
+}
+
+.model-output-name strong {
+  font-size: 13px;
+}
+
+.model-output-family {
+  white-space: nowrap;
+}
+
+.model-output-prediction {
+  font-weight: 520;
+  color: #263247;
+  white-space: nowrap;
+}
+
+.model-output-probabilities {
+  min-width: 280px;
+}
+
+.probability-header {
+  margin-bottom: 7px;
+  color: #7a8495;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.probability-row {
+  display: grid;
+  grid-template-columns: 52px minmax(100px, 1fr) 54px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.probability-label {
+  color: #697487;
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.probability-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0f4;
+}
+
+.probability-fill {
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  transition: width 400ms ease;
+}
+
+.probability-fill.class-zero {
+  background: #aab3c1;
+}
+
+.probability-fill.class-one {
+  background: #56647a;
+}
+
+.probability-value {
+  color: #364155;
+  font-family:
+    "SFMono-Regular",
+    "SF Mono",
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 800px) {
+  .model-output-table {
+    min-width: 760px;
+  }
+}
+
+
+/* ============================================================
+   VITALIS — BENCHMARK MATRIX
+   ============================================================ */
+
+.screening-benchmark-table {
+  width: 100%;
+  min-width: 900px;
+  table-layout: fixed;
+  border: 1px solid #e1e5eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.screening-benchmark-table th {
+  height: 44px;
+  padding: 0 14px;
+  background: #f8f9fb;
+  border-bottom: 1px solid #dfe4eb;
+  color: #697487;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.screening-benchmark-table th:first-child,
+.screening-benchmark-table th:nth-child(2) {
+  text-align: left;
+}
+
+.screening-benchmark-table th:first-child {
+  width: 24%;
+}
+
+.screening-benchmark-table th:nth-child(2) {
+  width: 12%;
+}
+
+.screening-benchmark-table th:nth-child(n+3) {
+  width: 10.67%;
+}
+
+.screening-benchmark-table td {
+  height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e8ebf0;
+  background: #fff;
+  color: #263247;
+  font-size: 12px;
+  text-align: right;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+}
+
+.screening-benchmark-table td:first-child,
+.screening-benchmark-table td:nth-child(2) {
+  text-align: left;
+}
+
+.screening-benchmark-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.screening-benchmark-table tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.screening-benchmark-table tbody tr:hover td {
+  background: #fafbfc;
+}
+
+.screening-benchmark-table td:first-child {
+  font-weight: 620;
+  color: #1d2738;
+  white-space: nowrap;
+}
+
+.screening-benchmark-table td:nth-child(n+3) {
+  font-family:
+    "SFMono-Regular",
+    "SF Mono",
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 11px;
+  color: #344057;
+}
+
+/* Metric values get a subtle capsule */
+
+.screening-benchmark-table td:nth-child(n+3) {
+  position: relative;
+}
+
+.screening-benchmark-table td:nth-child(n+3)::after {
+  content: "";
+  display: block;
+  height: 3px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #edf0f4;
+}
+
+/* Classical / Quantum badge */
+
+.screening-benchmark-table .screening-badge {
+  min-height: 23px;
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+/* Slight separation between model families */
+
+.screening-benchmark-table tbody tr:nth-child(4) td {
+  border-top: 1px solid #d9dee7;
+}
+
+/* Make the AUC column feel like the final metric */
+
+.screening-benchmark-table th:last-child,
+.screening-benchmark-table td:last-child {
+  padding-right: 20px;
+}
+
+@media (max-width: 900px) {
+  .screening-benchmark-table {
+    min-width: 860px;
+  }
+}
+
+
+/* ============================================================
+   VITALIS — BENCHMARK MATRIX
+   ============================================================ */
+
+.screening-bench-table {
+  width: 100%;
+  min-width: 900px;
+  table-layout: fixed;
+  border: 1px solid #e1e5eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.screening-bench-table th {
+  height: 44px;
+  padding: 0 14px;
+  background: #f8f9fb;
+  border-bottom: 1px solid #dfe4eb;
+  color: #697487;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.screening-bench-table th:first-child,
+.screening-bench-table th:nth-child(2) {
+  text-align: left;
+}
+
+.screening-bench-table th:first-child {
+  width: 24%;
+}
+
+.screening-bench-table th:nth-child(2) {
+  width: 12%;
+}
+
+.screening-bench-table th:nth-child(n+3) {
+  width: 10.67%;
+}
+
+.screening-bench-table td {
+  height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e8ebf0;
+  background: #fff;
+  color: #263247;
+  font-size: 12px;
+  text-align: right;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+}
+
+.screening-bench-table td:first-child,
+.screening-bench-table td:nth-child(2) {
+  text-align: left;
+}
+
+.screening-bench-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.screening-bench-table tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.screening-bench-table tbody tr:hover td {
+  background: #fafbfc;
+}
+
+.screening-bench-table td:first-child {
+  font-weight: 620;
+  color: #1d2738;
+  white-space: nowrap;
+}
+
+.screening-bench-table td:nth-child(n+3) {
+  font-family:
+    "SFMono-Regular",
+    "SF Mono",
+    ui-monospace,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
+  font-size: 11px;
+  color: #344057;
+}
+
+/* Subtle metric indicators */
+
+.screening-bench-table td:nth-child(n+3)::after {
+  content: "";
+  display: block;
+  height: 3px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #edf0f4;
+}
+
+/* Model family badge */
+
+.screening-bench-table .screening-badge {
+  min-height: 23px;
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+/* Separate classical and quantum groups */
+
+.screening-bench-table tbody tr:nth-child(4) td {
+  border-top: 1px solid #d9dee7;
+}
+
+.screening-bench-table th:last-child,
+.screening-bench-table td:last-child {
+  padding-right: 20px;
+}
+
+@media (max-width: 900px) {
+  .screening-bench-table {
+    min-width: 860px;
+  }
+}

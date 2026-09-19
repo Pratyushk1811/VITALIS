@@ -1,0 +1,93 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:ital,wght@0,300;0,400;1,300&family=DM+Mono:ital,wght@0,300;0,400;1,300&display=swap');
+@import 'tailwindcss';
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; padding: 0;
+  background: #080B0E;
+  color: #D6D2C9;
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(107,184,172,0.18); }
+
+/* ── Animation keyframes ─────────────────────────────────────────────────── */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(36px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-20px); }
+  to   { opacity: 1; transform: translateX(0);     }
+}
+
+@keyframes imgReveal {
+  from { opacity: 0; transform: scale(1.08); }
+  to   { opacity: 1; transform: scale(1.02); }
+}
+
+@keyframes lineGrow {
+  from { transform: scaleX(0); transform-origin: left; }
+  to   { transform: scaleX(1); transform-origin: left; }
+}
+
+@keyframes barRise {
+  from { transform: scaleY(0); transform-origin: bottom; }
+  to   { transform: scaleY(1); transform-origin: bottom; }
+}
+
+/* ── Entrance utilities (start invisible, animate when .section-visible added) */
+
+.anim-fadeUp,
+.anim-fadeIn,
+.anim-slideRight {
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.section-visible .anim-fadeUp {
+  animation: fadeUp 0.90s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.section-visible .anim-fadeIn {
+  animation: fadeIn 0.75s ease forwards;
+}
+
+.section-visible .anim-slideRight {
+  animation: slideRight 0.80s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.section-visible .anim-imgReveal {
+  animation: imgReveal 1.40s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Stagger delays */
+.d1 { animation-delay: 0.08s !important; }
+.d2 { animation-delay: 0.20s !important; }
+.d3 { animation-delay: 0.34s !important; }
+.d4 { animation-delay: 0.50s !important; }
+.d5 { animation-delay: 0.68s !important; }
+.d6 { animation-delay: 0.88s !important; }
+.d7 { animation-delay: 1.10s !important; }
+
+/* Benchmark bar animation */
+.bench-bar {
+  transform: scaleY(0);
+  transform-origin: bottom;
+}
+.section-visible .bench-bar {
+  animation: barRise 0.80s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
