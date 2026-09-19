@@ -1,0 +1,10 @@
+{
+  "description": "Experience an immersive 3D landing page that showcases VITALIS, a hybrid machine learning platform for early disease screening, blending classical and quantum computation.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
