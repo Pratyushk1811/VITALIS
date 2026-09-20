@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import joblib
 import numpy as np
@@ -336,6 +337,8 @@ def predict_heart(patient):
         5. VQC
     """
 
+    total_start = time.perf_counter()
+
     # ========================================================
     # BUILD FEATURE DATAFRAME
     # ========================================================
@@ -370,6 +373,8 @@ def predict_heart(patient):
     # LOGISTIC REGRESSION
     # ========================================================
 
+    start = time.perf_counter()
+
     lr_prediction = int(
         logistic_regression.predict(
             scaled_features
@@ -382,10 +387,17 @@ def predict_heart(patient):
         )[0]
     )
 
+    print(
+        f"[VITALIS] Logistic Regression: "
+        f"{(time.perf_counter() - start) * 1000:.2f} ms"
+    )
+
 
     # ========================================================
     # RANDOM FOREST
     # ========================================================
+
+    start = time.perf_counter()
 
     rf_prediction = int(
         random_forest.predict(
@@ -399,10 +411,17 @@ def predict_heart(patient):
         )[0]
     )
 
+    print(
+        f"[VITALIS] Random Forest: "
+        f"{(time.perf_counter() - start) * 1000:.2f} ms"
+    )
+
 
     # ========================================================
     # RBF SVM
     # ========================================================
+
+    start = time.perf_counter()
 
     svm_prediction = int(
         rbf_svm.predict(
@@ -416,13 +435,25 @@ def predict_heart(patient):
         )[0]
     )
 
+    print(
+        f"[VITALIS] RBF SVM: "
+        f"{(time.perf_counter() - start) * 1000:.2f} ms"
+    )
+
 
     # ========================================================
     # QSVM
     # ========================================================
 
+    start = time.perf_counter()
+
     qsvm_result = predict_qsvm(
         features
+    )
+
+    print(
+        f"[VITALIS] QSVM: "
+        f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
 
 
@@ -430,8 +461,15 @@ def predict_heart(patient):
     # VQC
     # ========================================================
 
+    start = time.perf_counter()
+
     vqc_result = predict_vqc(
         features
+    )
+
+    print(
+        f"[VITALIS] VQC: "
+        f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
 
 
@@ -524,6 +562,20 @@ def predict_heart(patient):
     else:
 
         consensus_status = "disagreement"
+
+
+    # ========================================================
+    # TOTAL TIMING
+    # ========================================================
+
+    total_time_ms = (
+        time.perf_counter() - total_start
+    ) * 1000
+
+    print(
+        f"[VITALIS] TOTAL HEART INFERENCE: "
+        f"{total_time_ms:.2f} ms"
+    )
 
 
     # ========================================================

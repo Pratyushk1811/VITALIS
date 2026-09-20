@@ -13,7 +13,6 @@ from backend.explainability_service import (
     explain_breast_cancer,
 )
 
-
 from backend.chatbot_service import explain_prediction
 
 
@@ -56,52 +55,32 @@ class HeartPatient(BaseModel):
     ca: float
     age: float
 
-    # --------------------------------------------------------
-    # CATEGORICAL VALIDATION
-    # --------------------------------------------------------
-
     @field_validator("cp")
     @classmethod
     def validate_cp(cls, value):
         if value not in {1, 2, 3, 4}:
-            raise ValueError(
-                "cp must be one of: 1, 2, 3, 4"
-            )
+            raise ValueError("cp must be one of: 1, 2, 3, 4")
         return value
 
     @field_validator("thal")
     @classmethod
     def validate_thal(cls, value):
         if value not in {3, 6, 7}:
-            raise ValueError(
-                "thal must be one of: 3, 6, 7"
-            )
+            raise ValueError("thal must be one of: 3, 6, 7")
         return value
 
     @field_validator("ca")
     @classmethod
     def validate_ca(cls, value):
         if value not in {0, 1, 2, 3}:
-            raise ValueError(
-                "ca must be one of: 0, 1, 2, 3"
-            )
+            raise ValueError("ca must be one of: 0, 1, 2, 3")
         return value
 
-    # --------------------------------------------------------
-    # NUMERIC VALIDATION
-    # --------------------------------------------------------
-
-    @field_validator(
-        "age",
-        "thalach",
-        "oldpeak",
-    )
+    @field_validator("age", "thalach", "oldpeak")
     @classmethod
     def validate_finite(cls, value):
         if not math.isfinite(value):
-            raise ValueError(
-                "Value must be finite"
-            )
+            raise ValueError("Value must be finite")
         return value
 
 
@@ -143,9 +122,7 @@ class BreastCancerPatient(BaseModel):
     @classmethod
     def validate_finite(cls, value):
         if not math.isfinite(value):
-            raise ValueError(
-                "All feature values must be finite numbers"
-            )
+            raise ValueError("All feature values must be finite numbers")
         return value
 
 
@@ -155,6 +132,7 @@ class BreastCancerPatient(BaseModel):
 
 class ChatRequest(BaseModel):
     disease: str
+    question: str
     patient_data: dict
     prediction_result: dict
 
@@ -181,9 +159,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {
-        "status": "healthy"
-    }
+    return {"status": "healthy"}
 
 
 # ============================================================
@@ -216,19 +192,10 @@ def diseases():
 def predict_heart_endpoint(patient: HeartPatient):
 
     try:
-
-        result = predict_heart(
-            patient.model_dump()
-        )
-
-        return result
+        return predict_heart(patient.model_dump())
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -236,24 +203,13 @@ def predict_heart_endpoint(patient: HeartPatient):
 # ============================================================
 
 @app.post("/predict/breast-cancer")
-def predict_breast_cancer_endpoint(
-    patient: BreastCancerPatient
-):
+def predict_breast_cancer_endpoint(patient: BreastCancerPatient):
 
     try:
-
-        result = predict_breast_cancer(
-            patient.model_dump()
-        )
-
-        return result
+        return predict_breast_cancer(patient.model_dump())
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -264,15 +220,10 @@ def predict_breast_cancer_endpoint(
 def benchmark():
 
     try:
-
         return get_all_benchmarks()
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -283,19 +234,10 @@ def benchmark():
 def explain_heart_endpoint(patient: HeartPatient):
 
     try:
-
-        result = explain_heart(
-            patient.model_dump()
-        )
-
-        return result
+        return explain_heart(patient.model_dump())
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -303,28 +245,17 @@ def explain_heart_endpoint(patient: HeartPatient):
 # ============================================================
 
 @app.post("/explain/breast-cancer")
-def explain_breast_cancer_endpoint(
-    patient: BreastCancerPatient
-):
+def explain_breast_cancer_endpoint(patient: BreastCancerPatient):
 
     try:
-
-        result = explain_breast_cancer(
-            patient.model_dump()
-        )
-
-        return result
+        return explain_breast_cancer(patient.model_dump())
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
-# AI EXPLANATION
+# AI CHAT
 # ============================================================
 
 @app.post("/chat")
@@ -334,48 +265,31 @@ def chat_endpoint(request: ChatRequest):
 
         disease = request.disease.lower().strip()
 
-        if disease not in {
-            "heart",
-            "breast_cancer",
-        }:
+        if disease not in {"heart", "breast_cancer"}:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Unsupported disease. "
-                    "Use 'heart' or 'breast_cancer'."
-                )
+                detail="Unsupported disease. Use 'heart' or 'breast_cancer'.",
             )
 
-        # ----------------------------------------------------
-        # GENERATE VITALIS EXPLAINABILITY
-        # ----------------------------------------------------
-
+        # Generate explainability
         if disease == "heart":
-
-            explainability_result = explain_heart(
-                request.patient_data
-            )
-
+            explainability_result = explain_heart(request.patient_data)
         else:
+            explainability_result = explain_breast_cancer(request.patient_data)
 
-            explainability_result = explain_breast_cancer(
-                request.patient_data
-            )
-
-        # ----------------------------------------------------
-        # SEND DATA TO OPENROUTER
-        # ----------------------------------------------------
-
+        # Generate AI response
         explanation = explain_prediction(
             disease=disease,
             patient_data=request.patient_data,
             prediction_result=request.prediction_result,
+            question=request.question,
             explainability_result=explainability_result,
         )
 
         return {
             "disease": disease,
             "model": "openai/gpt-oss-20b",
+            "question": request.question,
             "explanation": explanation,
         }
 
@@ -383,8 +297,4 @@ def chat_endpoint(request: ChatRequest):
         raise
 
     except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
