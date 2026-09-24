@@ -1,4 +1,4 @@
-\import {
+import {
   useEffect,
   useMemo,
   useRef,
@@ -1684,3 +1684,5 @@ export default function ScreeningPage() {
       </main>
     </div>
   )
+
+}
