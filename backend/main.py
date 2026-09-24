@@ -332,6 +332,44 @@ def _direct_answer(disease, question, patient, result):
             "that one group is better."
         )
 
+    # Result explanation: answer directly from the actual prediction.
+    if any(
+        phrase in q
+        for phrase in (
+            "what does the result mean",
+            "what do the results mean",
+            "explain the result",
+            "explain the prediction",
+            "what is the result",
+        )
+    ):
+        label = result.get("prediction_label")
+
+        if not label:
+            prediction = result.get("prediction")
+            if prediction == 1:
+                label = "Higher likelihood of cardiovascular disease"
+            elif prediction == 0:
+                label = "Lower likelihood of cardiovascular disease"
+
+        consensus = result.get("consensus") or {}
+        agreeing = consensus.get("agreeing_models")
+        total = consensus.get("total_models")
+        percentage = consensus.get("percentage")
+
+        if label:
+            if agreeing is not None and total is not None and percentage is not None:
+                return (
+                    f"The models predict a {label.lower()}. "
+                    f"{agreeing} of {total} models agree ({percentage:.0f}%). "
+                    "This is a screening prediction, not a medical diagnosis."
+                )
+
+            return (
+                f"The models predict a {label.lower()}. "
+                "This is a screening prediction, not a medical diagnosis."
+            )
+
     if q in {"hi", "hello", "hey", "hii"}:
         return "Hi. Ask me anything about this screening."
 
