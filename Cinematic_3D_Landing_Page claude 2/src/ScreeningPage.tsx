@@ -10,7 +10,7 @@ import './screening.css'
 const API =
   import.meta.env.VITE_API_URL ||
   localStorage.getItem('VITALIS_API_BASE_URL') ||
-  'http://127.0.0.1:8000'
+  'https://vitalis-production-17a9.up.railway.app'
 
 type Disease = 'heart' | 'breast_cancer'
 type DataSource = 'manual' | 'upload'
