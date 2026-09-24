@@ -265,10 +265,73 @@ def _q(text: str) -> str:
 
 
 def _direct_answer(disease, question, patient, result):
+    """Handle high-confidence questions directly from VITALIS data.
+
+    The LLM is still used for natural-language questions, but these answers
+    should never depend on generation when the required information is already
+    present in the screening result.
+    """
     q = _q(question)
 
-    # Model comparison: answer locally from the actual screening outputs.
-    # This avoids Groq latency and prevents truncated comparison answers.
+    # ------------------------------------------------------------
+    # Result / "am I okay?" intent
+    # ------------------------------------------------------------
+    simple_result_phrases = (
+        "am i okay",
+        "am i ok",
+        "is everything okay",
+        "is everything ok",
+        "is the result okay",
+        "is the result ok",
+        "is my result okay",
+        "is my result ok",
+        "is this okay",
+        "is this ok",
+        "does this mean i am okay",
+        "does this mean im okay",
+        "does this mean i'm okay",
+        "does this mean i am ok",
+        "does this mean im ok",
+        "does this mean i'm ok",
+        "explain in simple language",
+        "in simple language",
+        "simple language",
+        "what does this result mean",
+        "what does the result mean",
+        "what do the results mean",
+        "explain the result",
+        "explain my result",
+        "explain the prediction",
+        "what does this prediction mean",
+        "what does the prediction mean",
+    )
+
+    if any(phrase in q for phrase in simple_result_phrases):
+        label = result.get("prediction_label")
+        prediction = result.get("prediction")
+        consensus = result.get("consensus") or {}
+        agreeing = consensus.get("agreeing_models")
+        total = consensus.get("total_models")
+        percentage = consensus.get("percentage")
+
+        if label:
+            if prediction == 0 or "lower likelihood" in label.lower():
+                meaning = "The screening result is reassuring: the models found a lower likelihood of the screened condition for this input."
+            else:
+                meaning = "The screening result indicates a higher likelihood of the screened condition for this input."
+
+            if agreeing is not None and total is not None and percentage is not None:
+                return (
+                    f"{meaning} {agreeing} of {total} models agree ({float(percentage):.0f}%). "
+                    "That does not mean you are definitely healthy or have the disease; VITALIS is a screening tool, not a medical diagnosis."
+                )
+            return (
+                f"{meaning} This is a screening prediction, not a medical diagnosis."
+            )
+
+    # ------------------------------------------------------------
+    # Model comparison: use the actual outputs, never an LLM guess.
+    # ------------------------------------------------------------
     comparison_phrases = (
         "how did the classical and quantum models differ",
         "how do the classical and quantum models differ",
@@ -323,106 +386,126 @@ def _direct_answer(disease, question, patient, result):
             )
 
         return (
-            "The classical group contains Logistic Regression, Random Forest, "
-            "and RBF SVM. The quantum group contains QSVM and VQC. "
+            "The classical group contains Logistic Regression, Random Forest, and RBF SVM. "
+            "The quantum group contains QSVM and VQC. "
             "For this screening: Classical — " + summarize(classical) +
             " Quantum — " + summarize(quantum) +
-            " The models use different approaches, so their probability scores "
-            "and predictions can differ; this comparison does not by itself show "
-            "that one group is better."
+            " The models use different approaches, so their probability scores and predictions can differ; "
+            "this comparison does not by itself show that one group is better."
         )
 
-    # Result explanation: answer directly from the actual prediction.
-    if any(
-        phrase in q
-        for phrase in (
-            "what does the result mean",
-            "what do the results mean",
-            "explain the result",
-            "explain the prediction",
-            "what is the result",
-        )
-    ):
-        label = result.get("prediction_label")
+    # ------------------------------------------------------------
+    # Basic conversation
+    # ------------------------------------------------------------
+    if q in {"hi", "hello", "hey", "hii", "yo"}:
+        return "Hi. Ask me about your screening result, model outputs, features, or how VITALIS works."
 
-        if not label:
-            prediction = result.get("prediction")
-            if prediction == 1:
-                label = "Higher likelihood of cardiovascular disease"
-            elif prediction == 0:
-                label = "Lower likelihood of cardiovascular disease"
-
-        consensus = result.get("consensus") or {}
-        agreeing = consensus.get("agreeing_models")
-        total = consensus.get("total_models")
-        percentage = consensus.get("percentage")
-
-        if label:
-            if agreeing is not None and total is not None and percentage is not None:
-                return (
-                    f"The models predict a {label.lower()}. "
-                    f"{agreeing} of {total} models agree ({percentage:.0f}%). "
-                    "This is a screening prediction, not a medical diagnosis."
-                )
-
-            return (
-                f"The models predict a {label.lower()}. "
-                "This is a screening prediction, not a medical diagnosis."
-            )
-
-    if q in {"hi", "hello", "hey", "hii"}:
-        return "Hi. Ask me anything about this screening."
-
-    if q in {"thanks", "thank you", "thx"}:
+    if q in {"thanks", "thank you", "thx", "thank u"}:
         return "You're welcome."
 
-    if any(x in q for x in ("what is my result", "what was my result", "what is the prediction", "what did the model predict", "what did vitalis predict")):
+    # ------------------------------------------------------------
+    # Result / prediction wording
+    # ------------------------------------------------------------
+    if any(x in q for x in (
+        "what is my result",
+        "what was my result",
+        "what is the prediction",
+        "what did the model predict",
+        "what did vitalis predict",
+        "what is my prediction",
+        "show my result",
+    )):
         label = result.get("prediction_label")
         if label:
+            consensus = result.get("consensus") or {}
+            agreeing = consensus.get("agreeing_models")
+            total = consensus.get("total_models")
+            if agreeing is not None and total is not None:
+                return f"The screening result is {label}. {agreeing} of {total} models agree."
             return f"The screening result is {label}."
         pred = result.get("prediction")
         if pred is not None:
-            return f"The screening prediction is {pred}."
+            return f"The screening prediction is class {pred}."
 
-    if "oldpeak" in q or "st depression" in q:
-        if "my" in q or "value" in q:
-            v = patient.get("oldpeak")
-            if v is not None:
-                return f"Your oldpeak value is {v}."
-        return "Oldpeak measures ST-segment depression during exercise."
+    # ------------------------------------------------------------
+    # Individual model questions
+    # ------------------------------------------------------------
+    models = result.get("models") or {}
+    model_aliases = {
+        "logistic regression": "logistic_regression",
+        "logistic": "logistic_regression",
+        "random forest": "random_forest",
+        "rbf svm": "rbf_svm",
+        "svm": "rbf_svm",
+        "qsvm": "qsvm",
+        "quantum svm": "qsvm",
+        "vqc": "vqc",
+        "variational quantum classifier": "vqc",
+    }
+    for alias, key in model_aliases.items():
+        if alias in q and key in models and any(x in q for x in ("probability", "score", "predict", "result", "output")):
+            m = models[key]
+            pred = m.get("prediction")
+            p1 = m.get("class_1_probability")
+            if pred is not None and isinstance(p1, (int, float)):
+                return f"{alias.title()} predicted class {pred}, with a {float(p1) * 100:.1f}% class-1 probability."
+            if pred is not None:
+                return f"{alias.title()} predicted class {pred}."
 
-    if "qsvm" in q:
-        return "QSVM is a quantum support vector machine used as one of VITALIS's research models."
-
-    if "vqc" in q or "variational quantum classifier" in q:
-        return "VQC is a trainable quantum classification model used in VITALIS."
-
+    # ------------------------------------------------------------
+    # Heart feature questions
+    # ------------------------------------------------------------
     if disease == "heart":
-        if "age" in q:
-            v = patient.get("age")
-            if v is not None: return f"Your age is {v:g} years."
-        if any(x in q for x in ("heart rate", "thalach")):
+        if "oldpeak" in q or "st depression" in q:
+            if any(x in q for x in ("my", "mine", "value", "what is")):
+                v = patient.get("oldpeak")
+                if v is not None:
+                    return f"Your oldpeak value is {v}."
+            return "Oldpeak measures ST-segment depression during exercise."
+
+        if any(x in q for x in ("heart rate", "thalach", "maximum heart rate")):
             v = patient.get("thalach")
-            if v is not None: return f"Your maximum heart rate is {v:g} bpm."
+            if v is not None and any(x in q for x in ("my", "mine", "value", "what is")):
+                return f"Your maximum heart rate is {v:g} bpm."
+            return "Maximum heart rate (thalach) is the peak heart rate recorded during the test."
+
         if "chest pain" in q or "my cp" in q:
             v = patient.get("cp")
-            names={1:"typical angina",2:"atypical angina",3:"non-anginal pain",4:"asymptomatic"}
-            if v is not None:
-                n=int(v); return f"Your chest pain type is {n} — {names.get(n,'unknown')}."
-        if "major vessel" in q or "my ca" in q:
-            v=patient.get("ca")
-            if v is not None: return f"Your major-vessel value is {int(v)}."
-        if "thalassemia" in q or "my thal" in q:
-            v=patient.get("thal")
-            names={3:"normal",6:"fixed defect",7:"reversible defect"}
-            if v is not None:
-                n=int(v); return f"Your thal value is {n} — {names.get(n,'unknown')}."
+            names = {1: "typical angina", 2: "atypical angina", 3: "non-anginal pain", 4: "asymptomatic"}
+            if v is not None and any(x in q for x in ("my", "mine", "value", "what is")):
+                n = int(v)
+                return f"Your chest pain type is {n} — {names.get(n, 'unknown')}."
+            return "Chest pain type is the coded category used by the screening model."
 
+        if "major vessel" in q or "my ca" in q or "number of vessels" in q:
+            v = patient.get("ca")
+            if v is not None and any(x in q for x in ("my", "mine", "value", "what is")):
+                return f"Your major-vessel value is {int(v)}."
+            return "The major-vessel value (ca) represents the number of major vessels recorded in the dataset."
+
+        if "thalassemia" in q or "my thal" in q or "thal" in q:
+            v = patient.get("thal")
+            names = {3: "normal", 6: "fixed defect", 7: "reversible defect"}
+            if v is not None and any(x in q for x in ("my", "mine", "value", "what is")):
+                n = int(v)
+                return f"Your thal value is {n} — {names.get(n, 'unknown')}."
+            return "Thal is the coded thalassemia-related feature used by the heart screening model."
+
+        # Keep this last so generic questions containing "age" do not steal
+        # natural-language result questions.
+        if "age" in q and any(x in q for x in ("my", "mine", "what is", "how old")):
+            v = patient.get("age")
+            if v is not None:
+                return f"Your age is {v:g} years."
+
+    # ------------------------------------------------------------
+    # Breast-cancer feature questions
+    # ------------------------------------------------------------
     if disease == "breast_cancer":
-        normalized=q.replace(" ","_")
-        for key,value in patient.items():
+        normalized = q.replace(" ", "_")
+        for key, value in patient.items():
             if key.lower() in normalized:
-                return f"Your {key.replace('_',' ')} value is {value}."
+                return f"Your {key.replace('_', ' ')} value is {value}."
 
     return None
 
@@ -486,17 +569,19 @@ def _top_features_answer(explainability: dict | None) -> str | None:
 
 
 def _deterministic_explanation(question: str, result: dict, explainability: dict | None) -> str | None:
-    q=_q(question)
+    q = _q(question)
 
     if ("classical" in q and "quantum" in q and
-            any(x in q for x in ("differ", "difference", "compare"))):
+            any(x in q for x in ("differ", "difference", "compare", "same"))):
         return _model_comparison_answer(result)
 
     if any(x in q for x in (
         "what influenced",
         "influenced the prediction",
         "most important",
+        "most important feature",
         "feature importance",
+        "important factor",
     )):
         return _top_features_answer(explainability)
 
@@ -551,7 +636,9 @@ def chat_endpoint(request: ChatRequest):
         explainability_result=None
         if any(x in _q(question) for x in (
             "why", "influenc", "feature importance", "important feature",
-            "important factor", "reason for", "explain prediction"
+            "important factor", "reason for", "explain prediction",
+            "explain", "okay", "ok", "concerned", "worried",
+            "mean", "healthy", "serious", "risk"
         )):
             explainability_result=_cached_explainability(
                 disease, _cache_key(request.patient_data)
