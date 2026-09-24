@@ -1,11 +1,16 @@
-import { useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useNavigate } from 'react-router-dom'
 import './screening.css'
 
 const API =
   import.meta.env.VITE_API_URL ||
   localStorage.getItem('VITALIS_API_BASE_URL') ||
-  'https://vitalis-api-ddi2.onrender.com'
+  'http://127.0.0.1:8000'
 
 type Disease = 'heart' | 'breast_cancer'
 type DataSource = 'manual' | 'upload'
@@ -30,17 +35,29 @@ type ScreeningResult = {
 }
 
 type BenchmarkModel = {
+  model: string
+  family?: string
   accuracy?: number
   precision?: number
   sensitivity?: number
   specificity?: number
-  f1?: number
-  auc?: number
+  f1_score?: number
+  roc_auc?: number
 }
 
 type BenchmarkData = {
-  heart?: Record<string, BenchmarkModel>
-  breast_cancer?: Record<string, BenchmarkModel>
+  heart?: {
+    models?: BenchmarkModel[]
+  }
+  breast_cancer?: {
+    models?: BenchmarkModel[]
+  }
+}
+
+type ChatMessage = {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
 }
 
 const featureNames = [
@@ -110,7 +127,10 @@ const cancerDefaults = [
 ]
 
 const initialCancerData: PatientData = Object.fromEntries(
-  featureNames.map((name, index) => [name, cancerDefaults[index]]),
+  featureNames.map((name, index) => [
+    name,
+    cancerDefaults[index],
+  ]),
 )
 
 const modelOrder = [
@@ -129,7 +149,10 @@ const modelNames: Record<string, string> = {
   vqc: 'VQC',
 }
 
-async function api(path: string, options: RequestInit = {}) {
+async function api(
+  path: string,
+  options: RequestInit = {},
+) {
   const response = await fetch(`${API}${path}`, {
     headers: {
       'Content-Type': 'application/json',
@@ -147,18 +170,25 @@ async function api(path: string, options: RequestInit = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data.detail || `Request failed (${response.status})`)
+    throw new Error(
+      data.detail || `Request failed (${response.status})`,
+    )
   }
 
   return data
 }
 
 function predictionText(value?: number) {
-  return value === 1 ? 'Higher likelihood' : 'Lower likelihood'
+  return value === 1
+    ? 'Higher likelihood'
+    : 'Lower likelihood'
 }
 
 function labelFor(field: string, value: number) {
-  const maps: Record<string, Record<number, string>> = {
+  const maps: Record<
+    string,
+    Record<number, string>
+  > = {
     cp: {
       1: 'Typical angina',
       2: 'Atypical angina',
@@ -177,38 +207,76 @@ function labelFor(field: string, value: number) {
 
 export default function ScreeningPage() {
   const navigate = useNavigate()
-  const resultsRef = useRef<HTMLElement | null>(null)
 
-  const [disease, setDisease] = useState<Disease>('heart')
-  const [dataSource, setDataSource] = useState<DataSource>('manual')
+  const resultsRef =
+    useRef<HTMLElement | null>(null)
 
-  const [heartData, setHeartData] = useState<PatientData>({
-    age: 54,
-    cp: 2,
-    thalach: 150,
-    oldpeak: 1.2,
-    ca: 0,
-    thal: 3,
-  })
+  const chatMessagesRef =
+    useRef<HTMLDivElement | null>(null)
+
+  const chatInputRef =
+    useRef<HTMLTextAreaElement | null>(null)
+
+  const messageIdRef = useRef(0)
+
+  const [disease, setDisease] =
+    useState<Disease>('heart')
+
+  const [dataSource, setDataSource] =
+    useState<DataSource>('manual')
+
+  const [heartData, setHeartData] =
+    useState<PatientData>({
+      age: 54,
+      cp: 2,
+      thalach: 150,
+      oldpeak: 1.2,
+      ca: 0,
+      thal: 3,
+    })
 
   const [cancerData, setCancerData] =
     useState<PatientData>(initialCancerData)
 
-  const [file, setFile] = useState<File | null>(null)
+  const [file, setFile] =
+    useState<File | null>(null)
 
-  const [running, setRunning] = useState(false)
-  const [progressText, setProgressText] = useState('Running models...')
-  const [formError, setFormError] = useState('')
+  const [running, setRunning] =
+    useState(false)
 
-  const [result, setResult] = useState<ScreeningResult | null>(null)
-  const [benchmark, setBenchmark] = useState<BenchmarkData | null>(null)
+  const [progressText, setProgressText] =
+    useState('Running models...')
 
-  const [assistantAnswer, setAssistantAnswer] = useState('')
-  const [assistantError, setAssistantError] = useState('')
-  const [assistantLoading, setAssistantLoading] = useState(false)
+  const [formError, setFormError] =
+    useState('')
+
+  const [result, setResult] =
+    useState<ScreeningResult | null>(null)
+
+  const [benchmark, setBenchmark] =
+    useState<BenchmarkData | null>(null)
+
+  /* -----------------------------
+     CHAT STATE
+  ----------------------------- */
+
+  const [chatMessages, setChatMessages] =
+    useState<ChatMessage[]>([])
+
+  const [assistantError, setAssistantError] =
+    useState('')
+
+  const [assistantLoading, setAssistantLoading] =
+    useState(false)
+
+  const [chatInput, setChatInput] =
+    useState('')
 
   const patientData = useMemo(
-    () => (disease === 'heart' ? heartData : cancerData),
+    () =>
+      disease === 'heart'
+        ? heartData
+        : cancerData,
     [disease, heartData, cancerData],
   )
 
@@ -225,32 +293,69 @@ export default function ScreeningPage() {
     )
   }, [heartData])
 
-  const updateHeart = (key: string, value: number) => {
+  /* -----------------------------
+     CHAT AUTO SCROLL
+  ----------------------------- */
+
+  useEffect(() => {
+    const container = chatMessagesRef.current
+
+    if (!container) return
+
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: 'smooth',
+    })
+  }, [chatMessages, assistantLoading])
+
+  /* -----------------------------
+     INPUT HELPERS
+  ----------------------------- */
+
+  const updateHeart = (
+    key: string,
+    value: number,
+  ) => {
     setHeartData((previous) => ({
       ...previous,
       [key]: value,
     }))
   }
 
-  const updateCancer = (key: string, value: number) => {
+  const updateCancer = (
+    key: string,
+    value: number,
+  ) => {
     setCancerData((previous) => ({
       ...previous,
       [key]: value,
     }))
   }
 
+  /* -----------------------------
+     RESET
+  ----------------------------- */
+
   const resetResults = () => {
     setResult(null)
     setBenchmark(null)
-    setAssistantAnswer('')
+    setChatMessages([])
+    setChatInput('')
     setAssistantError('')
+    setAssistantLoading(false)
   }
 
-  const changeDisease = (next: Disease) => {
+  const changeDisease = (
+    next: Disease,
+  ) => {
     setDisease(next)
     setFormError('')
     resetResults()
   }
+
+  /* -----------------------------
+     REVIEW
+  ----------------------------- */
 
   const renderReview = () => {
     if (disease === 'heart') {
@@ -268,15 +373,27 @@ export default function ScreeningPage() {
               <th>Thalassemia</th>
             </tr>
           </thead>
+
           <tbody>
             <tr>
               <td>{d.age}</td>
+
               <td>
                 {labelFor('cp', d.cp)} ({d.cp})
               </td>
-              <td>{d.thalach} bpm</td>
-              <td>{d.oldpeak}</td>
-              <td>{d.ca}</td>
+
+              <td>
+                {d.thalach} bpm
+              </td>
+
+              <td>
+                {d.oldpeak}
+              </td>
+
+              <td>
+                {d.ca}
+              </td>
+
               <td>
                 {labelFor('thal', d.thal)} ({d.thal})
               </td>
@@ -287,17 +404,28 @@ export default function ScreeningPage() {
     }
 
     return (
-      <div className="screening-muted" style={{ fontSize: 12 }}>
-        30 numerical features are ready for review and submission.
+      <div
+        className="screening-muted"
+        style={{ fontSize: 12 }}
+      >
+        30 numerical features are ready
+        for review and submission.
       </div>
     )
   }
+
+  /* -----------------------------
+     MODEL OUTPUTS
+  ----------------------------- */
 
   const renderModels = () => {
     if (!result?.models) {
       return (
         <tr>
-          <td colSpan={4} className="screening-muted">
+          <td
+            colSpan={4}
+            className="screening-muted"
+          >
             No model outputs returned.
           </td>
         </tr>
@@ -306,31 +434,46 @@ export default function ScreeningPage() {
 
     const rows = modelOrder
       .map((key, index) => {
-        const model = result.models?.[key]
+        const model =
+          result.models?.[key]
 
         if (!model) return null
 
         const p0 =
-          Number(model.class_0_probability || 0) * 100
+          Number(
+            model.class_0_probability || 0,
+          ) * 100
+
         const p1 =
-          Number(model.class_1_probability || 0) * 100
+          Number(
+            model.class_1_probability || 0,
+          ) * 100
 
         const isQuantum = index >= 3
 
         return (
-          <tr key={key} className="model-output-row">
+          <tr
+            key={key}
+            className="model-output-row"
+          >
             <td className="model-output-name">
-              <strong>{modelNames[key]}</strong>
+              <strong>
+                {modelNames[key]}
+              </strong>
             </td>
 
             <td className="model-output-family">
               <span className="screening-badge">
-                {isQuantum ? 'Quantum' : 'Classical'}
+                {isQuantum
+                  ? 'Quantum'
+                  : 'Classical'}
               </span>
             </td>
 
             <td className="model-output-prediction">
-              {predictionText(model.prediction)}
+              {predictionText(
+                model.prediction,
+              )}
             </td>
 
             <td className="model-output-probabilities">
@@ -347,7 +490,10 @@ export default function ScreeningPage() {
                   <div
                     className="probability-fill class-zero"
                     style={{
-                      width: `${Math.max(0, Math.min(100, p0))}%`,
+                      width: `${Math.max(
+                        0,
+                        Math.min(100, p0),
+                      )}%`,
                     }}
                   />
                 </div>
@@ -366,7 +512,10 @@ export default function ScreeningPage() {
                   <div
                     className="probability-fill class-one"
                     style={{
-                      width: `${Math.max(0, Math.min(100, p1))}%`,
+                      width: `${Math.max(
+                        0,
+                        Math.min(100, p1),
+                      )}%`,
                     }}
                   />
                 </div>
@@ -385,12 +534,19 @@ export default function ScreeningPage() {
       rows
     ) : (
       <tr>
-        <td colSpan={4} className="screening-muted">
+        <td
+          colSpan={4}
+          className="screening-muted"
+        >
           No model outputs returned.
         </td>
       </tr>
     )
   }
+
+  /* -----------------------------
+     BENCHMARK
+  ----------------------------- */
 
   const renderBenchmark = () => {
     const data =
@@ -401,7 +557,10 @@ export default function ScreeningPage() {
     if (!data?.models?.length) {
       return (
         <tr>
-          <td colSpan={8} className="screening-muted">
+          <td
+            colSpan={8}
+            className="screening-muted"
+          >
             No benchmark data returned.
           </td>
         </tr>
@@ -411,7 +570,9 @@ export default function ScreeningPage() {
     return data.models.map((model) => (
       <tr key={model.model}>
         <td>
-          <strong>{model.model}</strong>
+          <strong>
+            {model.model}
+          </strong>
         </td>
 
         <td>
@@ -423,39 +584,65 @@ export default function ScreeningPage() {
         </td>
 
         <td className="screening-num">
-          {Number(model.accuracy ?? 0).toFixed(2)}%
+          {Number(
+            model.accuracy ?? 0,
+          ).toFixed(2)}
+          %
         </td>
 
         <td className="screening-num">
-          {Number(model.precision ?? 0).toFixed(2)}%
+          {Number(
+            model.precision ?? 0,
+          ).toFixed(2)}
+          %
         </td>
 
         <td className="screening-num">
-          {Number(model.sensitivity ?? 0).toFixed(2)}%
+          {Number(
+            model.sensitivity ?? 0,
+          ).toFixed(2)}
+          %
         </td>
 
         <td className="screening-num">
-          {Number(model.specificity ?? 0).toFixed(2)}%
+          {Number(
+            model.specificity ?? 0,
+          ).toFixed(2)}
+          %
         </td>
 
         <td className="screening-num">
-          {Number(model.f1_score ?? 0).toFixed(2)}%
+          {Number(
+            model.f1_score ?? 0,
+          ).toFixed(2)}
+          %
         </td>
 
         <td className="screening-num">
-          {Number(model.roc_auc ?? 0).toFixed(2)}%
+          {Number(
+            model.roc_auc ?? 0,
+          ).toFixed(2)}
+          %
         </td>
       </tr>
     ))
   }
 
+  /* -----------------------------
+     SCREENING
+  ----------------------------- */
+
   const runScreening = async () => {
     setFormError('')
 
-    if (disease === 'heart' && !validHeart) {
+    if (
+      disease === 'heart' &&
+      !validHeart
+    ) {
       setFormError(
         'Please check the cardiovascular inputs.',
       )
+
       return
     }
 
@@ -463,12 +650,17 @@ export default function ScreeningPage() {
       setFormError(
         'Report extraction is not enabled yet. Use Manual Input for the working screening flow.',
       )
+
       return
     }
 
     resetResults()
+
     setRunning(true)
-    setProgressText('Running screening models...')
+
+    setProgressText(
+      'Running screening models...',
+    )
 
     try {
       const endpoint =
@@ -479,24 +671,35 @@ export default function ScreeningPage() {
       const screeningResult =
         await api(endpoint, {
           method: 'POST',
-          body: JSON.stringify(patientData),
+          body: JSON.stringify(
+            patientData,
+          ),
         })
 
       setResult(screeningResult)
-      setProgressText('Screening complete.')
+
+      setProgressText(
+        'Screening complete.',
+      )
 
       const benchmarkResult =
-        await api('/benchmark').catch(() => null)
+        await api('/benchmark').catch(
+          () => null,
+        )
 
       if (benchmarkResult) {
-        setBenchmark(benchmarkResult)
+        setBenchmark(
+          benchmarkResult,
+        )
       }
 
       requestAnimationFrame(() => {
-        resultsRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        })
+        resultsRef.current?.scrollIntoView(
+          {
+            behavior: 'smooth',
+            block: 'start',
+          },
+        )
       })
     } catch (error) {
       setFormError(
@@ -509,30 +712,77 @@ export default function ScreeningPage() {
     }
   }
 
-  const ask = async (question: string) => {
+  /* -----------------------------
+     CHAT
+  ----------------------------- */
+
+  const ask = async (
+    question: string,
+  ) => {
+    const trimmed =
+      question.trim()
+
+    if (!trimmed) return
+
     if (!result) {
-      setAssistantError('Run a screening first.')
+      setAssistantError(
+        'Run a screening first.',
+      )
+
       return
     }
 
+    if (assistantLoading) return
+
     setAssistantError('')
-    setAssistantAnswer('')
+    setChatInput('')
+
+    const userMessage: ChatMessage = {
+      id: ++messageIdRef.current,
+      role: 'user',
+      content: trimmed,
+    }
+
+    setChatMessages(
+      (previous) => [
+        ...previous,
+        userMessage,
+      ],
+    )
+
     setAssistantLoading(true)
 
     try {
-      const response = await api('/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          disease,
-          patient_data: patientData,
-          prediction_result: result,
-          question,
-        }),
-      })
+      const response = await api(
+        '/chat',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            disease,
+            patient_data: patientData,
+            prediction_result:
+              result,
+            question: trimmed,
+          }),
+        },
+      )
 
-      setAssistantAnswer(
+      const answer =
         response.explanation ||
-          'No explanation returned.',
+        'No explanation returned.'
+
+      const assistantMessage:
+        ChatMessage = {
+        id: ++messageIdRef.current,
+        role: 'assistant',
+        content: answer,
+      }
+
+      setChatMessages(
+        (previous) => [
+          ...previous,
+          assistantMessage,
+        ],
       )
     } catch (error) {
       setAssistantError(
@@ -542,13 +792,41 @@ export default function ScreeningPage() {
       )
     } finally {
       setAssistantLoading(false)
+
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus()
+      })
     }
   }
+
+  const handleChatKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey
+    ) {
+      event.preventDefault()
+
+      const value =
+        event.currentTarget.value.trim()
+
+      if (value) {
+        ask(value)
+      }
+    }
+  }
+
+  /* -----------------------------
+     FILE
+  ----------------------------- */
 
   const handleFile = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
-    const selected = event.target.files?.[0] || null
+    const selected =
+      event.target.files?.[0] || null
+
     setFile(selected)
   }
 
@@ -556,9 +834,15 @@ export default function ScreeningPage() {
     setFile(null)
   }
 
+  /* -----------------------------
+     NEW SCREENING
+  ----------------------------- */
+
   const runAnother = () => {
     resetResults()
+
     setFormError('')
+
 
     window.scrollTo({
       top: 0,
@@ -566,44 +850,63 @@ export default function ScreeningPage() {
     })
   }
 
-  const consensus = result?.consensus
-  const consensusPercentage = Math.max(
-    0,
-    Math.min(
-      100,
-      Number(consensus?.percentage ?? 0),
-    ),
-  )
+  const consensus =
+    result?.consensus
+
+  const consensusPercentage =
+    Math.max(
+      0,
+      Math.min(
+        100,
+        Number(
+          consensus?.percentage ?? 0,
+        ),
+      ),
+    )
+
+  /* -----------------------------
+     RENDER
+  ----------------------------- */
 
   return (
     <div className="screening-page">
       <header className="screening-header">
-        <div className="screening-brand">VITALIS</div>
+        <div className="screening-brand">
+          VITALIS
+        </div>
 
         <button
           type="button"
           className="screening-back"
-          onClick={() => navigate('/')}
+          onClick={() =>
+            navigate('/')
+          }
         >
           ← Back to VITALIS
         </button>
       </header>
 
       <main className="screening-main">
+        {/* INTRO */}
+
         <section className="screening-intro">
-          <h1>Screening</h1>
+          <h1>SCREENING</h1>
 
           <p>
-            Run a model-based screening using patient data
-            and compare the resulting model outputs.
+            Run a model-based screening
+            using patient data and compare
+            the resulting model outputs.
           </p>
 
           <div className="screening-notice">
-            VITALIS is a research and screening platform.
-            Results are model outputs and are not a medical
-            diagnosis.
+            VITALIS is a research and
+            screening platform. Results are
+            model outputs and are not a
+            medical diagnosis.
           </div>
         </section>
+
+        {/* CONTROLS */}
 
         <section className="screening-section">
           <div className="screening-controls">
@@ -621,13 +924,15 @@ export default function ScreeningPage() {
                 value={disease}
                 onChange={(event) =>
                   changeDisease(
-                    event.target.value as Disease,
+                    event.target
+                      .value as Disease,
                   )
                 }
               >
                 <option value="heart">
                   Cardiovascular Disease
                 </option>
+
                 <option value="breast_cancer">
                   Breast Cancer
                 </option>
@@ -643,12 +948,15 @@ export default function ScreeningPage() {
                 <button
                   type="button"
                   className={`screening-tab ${
-                    dataSource === 'manual'
+                    dataSource ===
+                    'manual'
                       ? 'active'
                       : ''
                   }`}
                   onClick={() =>
-                    setDataSource('manual')
+                    setDataSource(
+                      'manual',
+                    )
                   }
                 >
                   Manual Input
@@ -657,12 +965,15 @@ export default function ScreeningPage() {
                 <button
                   type="button"
                   className={`screening-tab ${
-                    dataSource === 'upload'
+                    dataSource ===
+                    'upload'
                       ? 'active'
                       : ''
                   }`}
                   onClick={() =>
-                    setDataSource('upload')
+                    setDataSource(
+                      'upload',
+                    )
                   }
                 >
                   Upload Report
@@ -672,13 +983,18 @@ export default function ScreeningPage() {
           </div>
         </section>
 
+        {/* MANUAL INPUT */}
+
         {dataSource === 'manual' && (
           <section className="screening-section">
             {disease === 'heart' ? (
               <div>
                 <div className="screening-form-head">
                   <div>
-                    <h2>Cardiovascular inputs</h2>
+                    <h2>
+                      Cardiovascular inputs
+                    </h2>
+
                     <div
                       className="screening-muted"
                       style={{
@@ -704,16 +1020,23 @@ export default function ScreeningPage() {
                       className="screening-input"
                       type="number"
                       min="1"
-                      value={heartData.age}
+                      value={
+                        heartData.age
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'age',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     />
 
-                    <small>Age in years</small>
+                    <small>
+                      Age in years
+                    </small>
                   </div>
 
                   <div className="screening-field">
@@ -726,23 +1049,31 @@ export default function ScreeningPage() {
 
                     <select
                       className="screening-select"
-                      value={heartData.cp}
+                      value={
+                        heartData.cp
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'cp',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     >
                       <option value="1">
                         1 — Typical angina
                       </option>
+
                       <option value="2">
                         2 — Atypical angina
                       </option>
+
                       <option value="3">
                         3 — Non-anginal pain
                       </option>
+
                       <option value="4">
                         4 — Asymptomatic
                       </option>
@@ -751,7 +1082,8 @@ export default function ScreeningPage() {
 
                   <div className="screening-field">
                     <label className="screening-field-label">
-                      Maximum Heart Rate Achieved{' '}
+                      Maximum Heart Rate
+                      Achieved{' '}
                       <span className="screening-key">
                         thalach
                       </span>
@@ -760,23 +1092,30 @@ export default function ScreeningPage() {
                     <input
                       className="screening-input"
                       type="number"
-                      value={heartData.thalach}
+                      value={
+                        heartData.thalach
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'thalach',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     />
 
                     <small>
-                      Peak heart rate during testing
+                      Peak heart rate
+                      during testing
                     </small>
                   </div>
 
                   <div className="screening-field">
                     <label className="screening-field-label">
-                      ST Depression (Oldpeak){' '}
+                      ST Depression
+                      (Oldpeak){' '}
                       <span className="screening-key">
                         oldpeak
                       </span>
@@ -786,23 +1125,30 @@ export default function ScreeningPage() {
                       className="screening-input"
                       type="number"
                       step="0.1"
-                      value={heartData.oldpeak}
+                      value={
+                        heartData.oldpeak
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'oldpeak',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     />
 
                     <small>
-                      Exercise-induced ST depression
+                      Exercise-induced
+                      ST depression
                     </small>
                   </div>
 
                   <div className="screening-field">
                     <label className="screening-field-label">
-                      Number of Major Vessels{' '}
+                      Number of Major
+                      Vessels{' '}
                       <span className="screening-key">
                         ca
                       </span>
@@ -810,18 +1156,34 @@ export default function ScreeningPage() {
 
                     <select
                       className="screening-select"
-                      value={heartData.ca}
+                      value={
+                        heartData.ca
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'ca',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     >
-                      <option value="0">0</option>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
+                      <option value="0">
+                        0
+                      </option>
+
+                      <option value="1">
+                        1
+                      </option>
+
+                      <option value="2">
+                        2
+                      </option>
+
+                      <option value="3">
+                        3
+                      </option>
                     </select>
                   </div>
 
@@ -835,20 +1197,27 @@ export default function ScreeningPage() {
 
                     <select
                       className="screening-select"
-                      value={heartData.thal}
+                      value={
+                        heartData.thal
+                      }
                       onChange={(event) =>
                         updateHeart(
                           'thal',
-                          Number(event.target.value),
+                          Number(
+                            event.target
+                              .value,
+                          ),
                         )
                       }
                     >
                       <option value="3">
                         3 — Normal
                       </option>
+
                       <option value="6">
                         6 — Fixed defect
                       </option>
+
                       <option value="7">
                         7 — Reversible defect
                       </option>
@@ -860,7 +1229,10 @@ export default function ScreeningPage() {
               <div>
                 <div className="screening-form-head">
                   <div>
-                    <h2>Breast cancer inputs</h2>
+                    <h2>
+                      Breast cancer inputs
+                    </h2>
+
                     <div
                       className="screening-muted"
                       style={{
@@ -874,39 +1246,52 @@ export default function ScreeningPage() {
                 </div>
 
                 <div className="screening-form-grid">
-                  {featureNames.map((name, index) => (
-                    <div
-                      className="screening-field"
-                      key={name}
-                    >
-                      <label className="screening-field-label">
-                        {name}{' '}
-                        <span className="screening-key">
-                          {index + 1}
-                        </span>
-                      </label>
+                  {featureNames.map(
+                    (name, index) => (
+                      <div
+                        className="screening-field"
+                        key={name}
+                      >
+                        <label className="screening-field-label">
+                          {name}{' '}
+                          <span className="screening-key">
+                            {index + 1}
+                          </span>
+                        </label>
 
-                      <input
-                        className="screening-input"
-                        type="number"
-                        step="any"
-                        value={cancerData[name]}
-                        onChange={(event) =>
-                          updateCancer(
-                            name,
-                            Number(event.target.value),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
+                        <input
+                          className="screening-input"
+                          type="number"
+                          step="any"
+                          value={
+                            cancerData[
+                              name
+                            ]
+                          }
+                          onChange={(event) =>
+                            updateCancer(
+                              name,
+                              Number(
+                                event.target
+                                  .value,
+                              ),
+                            )
+                          }
+                        />
+                      </div>
+                    ),
+                  )}
                 </div>
               </div>
             )}
 
+            {/* REVIEW */}
+
             <div className="screening-review">
               <div className="screening-form-head">
-                <h2>Review input</h2>
+                <h2>
+                  Review input
+                </h2>
 
                 <span className="screening-success">
                   Valid input
@@ -919,7 +1304,9 @@ export default function ScreeningPage() {
                 <button
                   type="button"
                   className="screening-primary"
-                  onClick={runScreening}
+                  onClick={
+                    runScreening
+                  }
                   disabled={running}
                 >
                   {running
@@ -931,10 +1318,13 @@ export default function ScreeningPage() {
                   type="button"
                   className="screening-secondary"
                   onClick={() =>
-                    window.scrollTo({
-                      top: 0,
-                      behavior: 'smooth',
-                    })
+                    window.scrollTo(
+                      {
+                        top: 0,
+                        behavior:
+                          'smooth',
+                      },
+                    )
                   }
                 >
                   Edit inputs
@@ -944,7 +1334,9 @@ export default function ScreeningPage() {
 
             {running && (
               <div className="screening-progress">
-                <div>{progressText}</div>
+                <div>
+                  {progressText}
+                </div>
 
                 <div className="screening-progress-line">
                   <div />
@@ -960,26 +1352,36 @@ export default function ScreeningPage() {
           </section>
         )}
 
+        {/* UPLOAD */}
+
         {dataSource === 'upload' && (
           <section className="screening-section">
             <div
               className="screening-upload"
               onClick={() => {
                 document
-                  .getElementById('screening-file-input')
+                  .getElementById(
+                    'screening-file-input',
+                  )
                   ?.click()
               }}
             >
-              <strong>Upload medical report</strong>
+              <strong>
+                Upload medical report
+              </strong>
 
               <span>
-                Drop a PDF or image here, or{' '}
+                Drop a PDF or image here,
+                or{' '}
                 <label
                   htmlFor="screening-file-input"
                   style={{
-                    color: 'var(--screen-blue)',
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
+                    color:
+                      'var(--screen-blue)',
+                    cursor:
+                      'pointer',
+                    textDecoration:
+                      'underline',
                   }}
                   onClick={(event) =>
                     event.stopPropagation()
@@ -994,24 +1396,37 @@ export default function ScreeningPage() {
                 id="screening-file-input"
                 type="file"
                 accept=".pdf,.jpg,.jpeg,.png"
-                onChange={handleFile}
+                onChange={
+                  handleFile
+                }
               />
             </div>
 
             {file && (
               <div className="screening-file-row">
                 <div>
-                  <strong>{file.name}</strong>
+                  <strong>
+                    {file.name}
+                  </strong>
 
                   <div className="screening-muted">
-                    {file.type || 'File'} ·{' '}
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {file.type ||
+                      'File'}{' '}
+                    ·{' '}
+                    {(
+                      file.size /
+                      1024 /
+                      1024
+                    ).toFixed(2)}{' '}
+                    MB
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={removeFile}
+                  onClick={
+                    removeFile
+                  }
                 >
                   Remove
                 </button>
@@ -1019,10 +1434,13 @@ export default function ScreeningPage() {
             )}
 
             <div className="screening-future">
-              Automatic document extraction is not enabled
-              yet. A report must eventually be converted
-              into structured features and reviewed before
-              being sent to the screening models.
+              Automatic document
+              extraction is not enabled
+              yet. A report must eventually
+              be converted into structured
+              features and reviewed before
+              being sent to the screening
+              models.
             </div>
 
             {formError && (
@@ -1033,238 +1451,236 @@ export default function ScreeningPage() {
           </section>
         )}
 
+        {/* RESULTS */}
+
         {result && (
           <section
             className="screening-results"
             ref={resultsRef}
           >
-            <div className="screening-result-top">
-              <div className="screening-result-box">
-                <h3>Screening result</h3>
+            <div className="screening-results-layout">
+              <div className="screening-results-main">
+                <div className="screening-result-top">
+                  <div className="screening-result-box">
+                    <h3>SCREENING RESULT</h3>
+                    <div className="screening-result-label">
+                      {(result.prediction_label ||
+                        predictionText(result.prediction)).toUpperCase()}
+                    </div>
+                    <div
+                      className="screening-muted"
+                      style={{ fontSize: 12, marginTop: 5 }}
+                    >
+                      Model-based screening prediction. Not a medical
+                      diagnosis.
+                    </div>
+                  </div>
 
-                <div className="screening-result-label">
-                  {result.prediction_label ||
-                    predictionText(result.prediction)}
-                </div>
-
-                <div
-                  className="screening-muted"
-                  style={{
-                    fontSize: 12,
-                    marginTop: 5,
-                  }}
-                >
-                  Model-based screening prediction. Not a
-                  medical diagnosis.
-                </div>
-              </div>
-
-              <div className="screening-consensus">
-                <h3>Model consensus</h3>
-
-                <div className="screening-consensus-number">
-                  {consensus?.agreeing_models ?? 0} /{' '}
-                  {consensus?.total_models ?? 0}
-                </div>
-
-                <div
-                  className="screening-muted"
-                  style={{
-                    fontSize: 12,
-                  }}
-                >
-                  {`models agree · ${Number(
-                    consensus?.percentage ?? 0,
-                  ).toFixed(1)}% · ${
-                    consensus?.status ?? ''
-                  }`}
-                </div>
-
-                <div className="screening-bar">
-                  <div
-                    style={{
-                      width: `${consensusPercentage}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="screening-panel">
-              <div className="screening-form-head">
-                <div>
-                  <h2>Model outputs</h2>
-
-                  <div
-                    className="screening-muted"
-                    style={{
-                      fontSize: 12,
-                    }}
-                  >
-                    Individual predictions and class
-                    probabilities returned by the backend.
+                  <div className="screening-consensus">
+                    <h3>MODEL CONSENSUS</h3>
+                    <div className="screening-consensus-number">
+                      {consensus?.agreeing_models ?? 0} /{" "}
+                      {consensus?.total_models ?? 0}
+                    </div>
+                    <div className="screening-muted" style={{ fontSize: 12 }}>
+                      {`models agree · ${Number(
+                        consensus?.percentage ?? 0,
+                      ).toFixed(1)}% · ${consensus?.status ?? ""}`}
+                    </div>
+                    <div className="screening-bar">
+                      <div style={{ width: `${consensusPercentage}%` }} />
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="screening-table-wrap">
-                <table className="screening-model-table model-output-table">
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Family</th>
-                      <th>Prediction</th>
-                      <th>Probability distribution</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {renderModels()}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="screening-panel">
-              <div className="screening-form-head">
-                <div>
-                  <h2>VITALIS Assistant</h2>
-
-                  <div
-                    className="screening-muted"
-                    style={{
-                      fontSize: 12,
-                    }}
-                  >
-                    Ask about this screening result.
+                <div className="screening-panel">
+                  <div className="screening-form-head">
+                    <div>
+                      <h2>MODEL OUTPUTS</h2>
+                      <div className="screening-muted" style={{ fontSize: 12 }}>
+                        Individual predictions and class probabilities returned
+                        by the backend.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="screening-table-wrap">
+                    <table className="screening-model-table model-output-table">
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Family</th>
+                          <th>Prediction</th>
+                          <th>Probability distribution</th>
+                        </tr>
+                      </thead>
+                      <tbody>{renderModels()}</tbody>
+                    </table>
                   </div>
                 </div>
-              </div>
 
-              <div className="screening-prompts">
-                {[
-                  'Why did the models predict this?',
-                  'How did the classical and quantum models differ?',
-                  'What influenced the prediction most?',
-                ].map((question) => (
+                <div className="screening-panel">
+                  <div className="screening-form-head">
+                    <div>
+                      <h2>BENCHMARK</h2>
+                      <div className="screening-muted" style={{ fontSize: 12 }}>
+                        Evaluation metrics for the implemented models.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="screening-table-wrap">
+                    <table className="screening-bench-table">
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Class</th>
+                          <th>Accuracy</th>
+                          <th>Precision</th>
+                          <th>Sensitivity</th>
+                          <th>Specificity</th>
+                          <th>F1</th>
+                          <th>AUC</th>
+                        </tr>
+                      </thead>
+                      <tbody>{renderBenchmark()}</tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="screening-actions">
                   <button
                     type="button"
-                    className="screening-prompt"
-                    key={question}
-                    onClick={() => ask(question)}
+                    className="screening-secondary"
+                    onClick={runAnother}
                   >
-                    {question}
+                    Run Another Screening
                   </button>
-                ))}
+                </div>
               </div>
 
-              <div className="screening-assistant">
-                <input
-                  className="screening-input"
-                  placeholder="Ask a question about this result..."
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      const value =
-                        event.currentTarget.value.trim()
-
-                      if (value) ask(value)
-                    }
-                  }}
-                />
-
-                <button
-                  type="button"
-                  className="screening-primary"
-                  onClick={(event) => {
-                    const input =
-                      event.currentTarget
-                        .previousElementSibling as HTMLInputElement | null
-
-                    const value =
-                      input?.value.trim() || ''
-
-                    if (value) ask(value)
-                  }}
-                  disabled={assistantLoading}
-                >
-                  {assistantLoading ? 'Sending...' : 'Send'}
-                </button>
-              </div>
-
-              {assistantAnswer && (
-                <div className="screening-answer">
-                  {assistantAnswer}
-                </div>
-              )}
-
-              {assistantError && (
-                <div className="screening-error">
-                  {assistantError}
-                </div>
-              )}
-            </div>
-
-            <div className="screening-panel">
-              <div className="screening-form-head">
-                <div>
-                  <h2>Benchmark</h2>
-
-                  <div
-                    className="screening-muted"
-                    style={{
-                      fontSize: 12,
-                    }}
-                  >
-                    Evaluation metrics for the implemented
-                    models.
+              <aside
+                className="vitalis-chat-card"
+                aria-label="VITALIS AI assistant"
+              >
+                <div className="vitalis-chat-card-header">
+                  <div>
+                    <div className="vitalis-chat-title">VITALIS AI</div>
+                    <div className="vitalis-chat-status">
+                      <span className="vitalis-chat-status-dot" />
+                      Screening context ready
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="screening-table-wrap">
-                <table className="screening-bench-table">
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Class</th>
-                      <th>Accuracy</th>
-                      <th>Precision</th>
-                      <th>Sensitivity</th>
-                      <th>Specificity</th>
-                      <th>F1</th>
-                      <th>AUC</th>
-                    </tr>
-                  </thead>
+                <div
+                  className="vitalis-chat-messages"
+                  ref={chatMessagesRef}
+                >
+                  {chatMessages.length === 0 && (
+                    <div className="vitalis-chat-welcome">
+                      <div className="vitalis-chat-welcome-mark">AI</div>
+                      <div className="vitalis-chat-welcome-title">
+                        Ask about this screening
+                      </div>
+                      <div className="vitalis-chat-welcome-text">
+                        Ask about the model outputs, the implemented
+                        approaches, or factors reflected in this result.
+                      </div>
+                      <div className="vitalis-chat-prompts">
+                        {[
+                          "Why did the models predict this?",
+                          "How did the classical and quantum models differ?",
+                          "What influenced the prediction most?",
+                        ].map((question) => (
+                          <button
+                            type="button"
+                            className="vitalis-chat-prompt"
+                            key={question}
+                            onClick={() => ask(question)}
+                            disabled={assistantLoading}
+                          >
+                            {question}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                  <tbody>
-                    {renderBenchmark()}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                  {chatMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`vitalis-chat-message ${
+                        message.role === "user" ? "user" : "assistant"
+                      }`}
+                    >
+                      <div className="vitalis-chat-message-label">
+                        {message.role === "user" ? "YOU" : "VITALIS AI"}
+                      </div>
+                      <div className="vitalis-chat-bubble">
+                        {message.content}
+                      </div>
+                    </div>
+                  ))}
 
-            <div className="screening-actions">
-              <button
-                type="button"
-                className="screening-secondary"
-                onClick={runAnother}
-              >
-                Run Another Screening
-              </button>
+                  {assistantLoading && (
+                    <div className="vitalis-chat-message assistant">
+                      <div className="vitalis-chat-message-label">
+                        VITALIS AI
+                      </div>
+                      <div className="vitalis-chat-bubble vitalis-chat-typing">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </div>
+                  )}
+
+                  {assistantError && (
+                    <div className="vitalis-chat-error">
+                      {assistantError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="vitalis-chat-input-area">
+                  <textarea
+                    ref={chatInputRef}
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={handleChatKeyDown}
+                    placeholder="Ask about this result..."
+                    rows={1}
+                    disabled={assistantLoading}
+                  />
+                  <button
+                    type="button"
+                    className="vitalis-chat-send"
+                    onClick={() => ask(chatInput)}
+                    disabled={assistantLoading || !chatInput.trim()}
+                    aria-label="Send message"
+                  >
+                    ↑
+                  </button>
+                </div>
+
+                <div className="vitalis-chat-hint">
+                  Enter to send · Shift + Enter for a new line
+                </div>
+              </aside>
             </div>
           </section>
         )}
 
-        <footer className="screening-footer">
-          <span>
-            VITALIS · research screening interface
-          </span>
+      <footer className="screening-footer">
+        <span>
+          VITALIS · research screening
+          interface
+        </span>
 
-          <span>
-            Classical and quantum models are presented
-            without ranking.
-          </span>
-        </footer>
+        <span>
+          Classical and quantum models
+          are presented without ranking.
+        </span>
+      </footer>
       </main>
     </div>
   )
