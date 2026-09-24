@@ -1,6 +1,6 @@
 import os
+import requests
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
 
@@ -8,11 +8,6 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY environment variable is not set.")
-
-client = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-)
 
 MODEL = "openai/gpt-oss-20b"
 
@@ -113,18 +108,29 @@ Rules:
 Return ONLY the answer.
 """
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=80,
-        reasoning_effort="low",
+    response = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 80,
+        },
+        timeout=30,
     )
 
-    answer = response.choices[0].message.content
+    response.raise_for_status()
+
+    data = response.json()
+
+    answer = data["choices"][0]["message"]["content"]
 
     if not answer:
         return "I don't have that information."
