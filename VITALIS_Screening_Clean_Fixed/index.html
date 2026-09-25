@@ -20,7 +20,7 @@ main{max-width:1080px;margin:0 auto;padding:34px 28px 64px}h1{font-size:24px;lin
 <body>
 <header><div class="brand">VITALIS</div><a class="back" href="#">← Back to VITALIS</a></header>
 <main>
-<section class="intro"><h1>Screening</h1><p>Run a model-based screening using patient data and compare the resulting model outputs.</p><div class="notice">VITALIS is a research and screening platform. Results are model outputs and are not a medical diagnosis.</div></section>
+<section class="intro"><h1>SCREENING</h1><p>Run a model-based screening using patient data and compare the resulting model outputs.</p><div class="notice">VITALIS is a research and screening platform. Results are model outputs and are not a medical diagnosis.</div></section>
 
 <section class="section">
   <div class="controls">
@@ -63,7 +63,7 @@ main{max-width:1080px;margin:0 auto;padding:34px 28px 64px}h1{font-size:24px;lin
   </div>
 
   <div class="panel"><div class="form-head"><div><h2>Model outputs</h2><div class="muted" style="font-size:12px">Individual predictions and class probabilities returned by the backend.</div></div></div><div style="overflow:auto"><table class="model-table"><thead><tr><th>Model</th><th>Family</th><th>Prediction</th><th>Class 0</th><th>Class 1</th></tr></thead><tbody id="modelRows"></tbody></table></div></div>
-  <div class="panel"><div class="form-head"><div><h2>Explainability</h2><div class="muted" style="font-size:12px">Estimated local influence on model output.</div></div></div><div id="explanationContent" class="muted" style="font-size:12px">Run a screening to generate this section.</div></div>
+
   <div class="panel"><div class="form-head"><div><h2>VITALIS Assistant</h2><div class="muted" style="font-size:12px">Ask about this screening result.</div></div></div><div class="prompts"><button class="prompt" data-q="Why did the models predict this?">Why did the models predict this?</button><button class="prompt" data-q="How did the classical and quantum models differ?">How did the classical and quantum models differ?</button><button class="prompt" data-q="What influenced the prediction most?">What influenced the prediction most?</button></div><div class="assistant"><input class="input" id="assistantInput" placeholder="Ask a question about this result..."><button class="primary" id="assistantSend">Send</button></div><div id="assistantAnswer" class="answer hidden"></div><div id="assistantError" class="error hidden"></div></div>
   <div class="panel"><div class="form-head"><div><h2>Benchmark</h2><div class="muted" style="font-size:12px">Evaluation metrics for the implemented models.</div></div></div><div style="overflow:auto"><table class="bench-table"><thead><tr><th>Model</th><th>Accuracy</th><th>Precision</th><th>Sensitivity</th><th>Specificity</th><th>F1</th><th>AUC</th></tr></thead><tbody id="benchmarkRows"></tbody></table></div></div>
   <div class="actions"><button class="secondary" id="another">Run Another Screening</button></div>
