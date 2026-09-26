@@ -14,5 +14,10 @@
     "sensitivity": 0.7143,
     "specificity": 0.9375,
     "f1_score": 0.8,
-    "roc_auc": 0.9286
+    "roc_auc": 0.9286,
+    "training_kernel_time": 49.9711,
+    "test_kernel_time": 12.4321,
+    "training_time": 0.0035,
+    "evaluation_time": 0.0002,
+    "total_time": 62.4243
 }

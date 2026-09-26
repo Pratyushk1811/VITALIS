@@ -1,14 +1,27 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from __future__ import annotations
+
+import io
 import math
-import json
-from functools import lru_cache
+import uuid
+from typing import Any
+
+import pandas as pd
+import pennylane as qml
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from backend.train_pipeline import run_training_pipeline
+from backend.train_quantum import quantum_kernel
 
 from backend.heart_pipeline import predict_heart
 from backend.breast_cancer_pipeline import predict_breast_cancer
 
-from backend.benchmark_service import get_all_benchmarks
+from backend.benchmark_service import (
+    get_all_benchmarks,
+    get_session_benchmark,
+)
 
 from backend.explainability_service import (
     explain_heart,
@@ -26,9 +39,9 @@ app = FastAPI(
     title="VITALIS API",
     description=(
         "Hybrid classical-quantum machine learning platform "
-        "for early disease screening and research benchmarking."
+        "for disease screening, benchmarking, and research."
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
 
 
@@ -46,399 +59,1667 @@ app.add_middleware(
 
 
 # ============================================================
-# INPUT MODELS
+# TRAINING SESSIONS
 # ============================================================
 
-class HeartPatient(BaseModel):
-    cp: float
-    thal: float
-    thalach: float
-    oldpeak: float
-    ca: float
-    age: float
-
-    @field_validator("cp")
-    @classmethod
-    def validate_cp(cls, value):
-        if value not in {1, 2, 3, 4}:
-            raise ValueError("cp must be one of: 1, 2, 3, 4")
-        return value
-
-    @field_validator("thal")
-    @classmethod
-    def validate_thal(cls, value):
-        if value not in {3, 6, 7}:
-            raise ValueError("thal must be one of: 3, 6, 7")
-        return value
-
-    @field_validator("ca")
-    @classmethod
-    def validate_ca(cls, value):
-        if value not in {0, 1, 2, 3}:
-            raise ValueError("ca must be one of: 0, 1, 2, 3")
-        return value
-
-    @field_validator("age", "thalach", "oldpeak")
-    @classmethod
-    def validate_finite(cls, value):
-        if not math.isfinite(value):
-            raise ValueError("Value must be finite")
-        return value
-
-
-class BreastCancerPatient(BaseModel):
-    radius_mean: float
-    texture_mean: float
-    perimeter_mean: float
-    area_mean: float
-    smoothness_mean: float
-    compactness_mean: float
-    concavity_mean: float
-    concave_points_mean: float
-    symmetry_mean: float
-    fractal_dimension_mean: float
-
-    radius_se: float
-    texture_se: float
-    perimeter_se: float
-    area_se: float
-    smoothness_se: float
-    compactness_se: float
-    concavity_se: float
-    concave_points_se: float
-    symmetry_se: float
-    fractal_dimension_se: float
-
-    radius_worst: float
-    texture_worst: float
-    perimeter_worst: float
-    area_worst: float
-    smoothness_worst: float
-    compactness_worst: float
-    concavity_worst: float
-    concave_points_worst: float
-    symmetry_worst: float
-    fractal_dimension_worst: float
-
-    @field_validator("*")
-    @classmethod
-    def validate_finite(cls, value):
-        if not math.isfinite(value):
-            raise ValueError("All feature values must be finite numbers")
-        return value
+TRAINING_SESSIONS: dict[str, dict[str, Any]] = {}
 
 
 # ============================================================
-# AI CHAT REQUEST
+# REQUEST MODELS
 # ============================================================
+
+
+class DatasetTrainRequest(BaseModel):
+    target_column: str = Field(
+        ...,
+        description=(
+            "Name of the target/label column "
+            "in the uploaded CSV."
+        ),
+    )
+
+    quantum_components: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+        description="Number of quantum dimensions/qubits.",
+    )
+
+    test_size: float = Field(
+        default=0.20,
+        gt=0.05,
+        lt=0.50,
+        description="Fraction of the dataset reserved for testing.",
+    )
+
+    random_state: int = Field(
+        default=42,
+        description="Random seed used for the shared train/test split.",
+    )
+
+
+class GenericPredictionRequest(BaseModel):
+    session_id: str
+    features: dict[str, Any]
+
 
 class ChatRequest(BaseModel):
-    disease: str
     question: str
-    patient_data: dict
-    prediction_result: dict
+    session_id: str | None = None
+
+    # Kept for backward compatibility with the old disease-specific frontend.
+    disease: str | None = None
+    patient_data: dict[str, Any] | None = None
+    prediction_result: dict[str, Any] | None = None
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
+
+
+def _json_safe(value: Any) -> Any:
+
+    if value is None:
+        return None
+
+    if isinstance(value, (str, int, bool)):
+        return value
+
+    if isinstance(value, float):
+
+        if math.isnan(value) or math.isinf(value):
+            return None
+
+        return value
+
+    if hasattr(value, "item"):
+
+        try:
+            return _json_safe(value.item())
+        except Exception:
+            pass
+
+    if isinstance(value, dict):
+
+        return {
+            str(key): _json_safe(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+
+        return [
+            _json_safe(item)
+            for item in value
+        ]
+
+    if isinstance(value, pd.Series):
+
+        return [
+            _json_safe(item)
+            for item in value.tolist()
+        ]
+
+    if isinstance(value, pd.DataFrame):
+
+        return [
+            {
+                str(key): _json_safe(item)
+                for key, item in row.items()
+            }
+            for row in value.to_dict(
+                orient="records"
+            )
+        ]
+
+    if hasattr(value, "tolist"):
+
+        try:
+            return _json_safe(value.tolist())
+        except Exception:
+            pass
+
+    return str(value)
+
+
+def _read_csv_upload(raw: bytes) -> pd.DataFrame:
+
+    if not raw:
+        raise ValueError(
+            "Uploaded file is empty."
+        )
+
+    try:
+        text = raw.decode("utf-8-sig")
+
+    except UnicodeDecodeError as exc:
+
+        raise ValueError(
+            "CSV must be UTF-8 encoded."
+        ) from exc
+
+    if not text.strip():
+
+        raise ValueError(
+            "CSV contains no data."
+        )
+
+    try:
+
+        dataframe = pd.read_csv(
+            io.StringIO(text)
+        )
+
+    except Exception as exc:
+
+        raise ValueError(
+            f"Could not parse CSV: {exc}"
+        ) from exc
+
+    if dataframe.empty:
+
+        raise ValueError(
+            "CSV contains no rows."
+        )
+
+    if len(dataframe.columns) == 0:
+
+        raise ValueError(
+            "CSV contains no columns."
+        )
+
+    return dataframe
+
+
+def _validate_target(
+    dataframe: pd.DataFrame,
+    target_column: str,
+) -> None:
+
+    target_column = target_column.strip()
+
+    if not target_column:
+
+        raise ValueError(
+            "target_column cannot be empty."
+        )
+
+    if target_column not in dataframe.columns:
+
+        raise ValueError(
+            f"Target column '{target_column}' "
+            f"was not found. "
+            f"Available columns: "
+            f"{list(dataframe.columns)}"
+        )
+
+    target = dataframe[target_column]
+
+    if target.isna().all():
+
+        raise ValueError(
+            "The target column contains no usable values."
+        )
+
+    non_null_classes = (
+        target.dropna().nunique()
+    )
+
+    if non_null_classes < 2:
+
+        raise ValueError(
+            "Training requires at least two target classes."
+        )
+
+
+def _dataset_summary(
+    dataframe: pd.DataFrame,
+    target_column: str | None = None,
+) -> dict[str, Any]:
+
+    numeric_columns = (
+        dataframe
+        .select_dtypes(include=["number"])
+        .columns
+        .tolist()
+    )
+
+    categorical_columns = (
+        dataframe
+        .select_dtypes(
+            include=[
+                "object",
+                "category",
+                "bool",
+            ]
+        )
+        .columns
+        .tolist()
+    )
+
+    missing = dataframe.isna().sum()
+
+    summary = {
+        "rows": int(len(dataframe)),
+        "columns": int(len(dataframe.columns)),
+        "column_names": dataframe.columns.tolist(),
+        "numeric_columns": numeric_columns,
+        "categorical_columns": categorical_columns,
+        "missing_values": int(
+            dataframe.isna().sum().sum()
+        ),
+        "duplicate_rows": int(
+            dataframe.duplicated().sum()
+        ),
+        "target_column": target_column,
+    }
+
+    if (
+        target_column
+        and target_column in dataframe.columns
+    ):
+
+        target = dataframe[target_column]
+
+        distribution = (
+            target
+            .value_counts(dropna=False)
+            .to_dict()
+        )
+
+        summary["target"] = {
+            "classes": int(
+                target.dropna().nunique()
+            ),
+            "distribution": {
+                str(key): int(value)
+                for key, value in distribution.items()
+            },
+        }
+
+    summary["missing_by_column"] = {
+        str(column): int(value)
+        for column, value in missing.items()
+        if int(value) > 0
+    }
+
+    return summary
+
+
+def _public_training_result(
+    result: dict[str, Any],
+    session_id: str,
+    dataframe: pd.DataFrame,
+    target_column: str,
+) -> dict[str, Any]:
+
+    public = {}
+
+    for key, value in result.items():
+
+        if key == "_artifacts":
+            continue
+
+        public[key] = _json_safe(value)
+
+    artifacts = result.get(
+        "_artifacts",
+        {},
+    )
+
+    selected_features = (
+        artifacts.get(
+            "selected_features"
+        )
+    )
+
+    if selected_features is None:
+
+        selected_features = (
+            result.get(
+                "selected_features"
+            )
+        )
+
+    quantum_features = (
+        artifacts.get(
+            "X_train_quantum"
+        )
+    )
+
+    return {
+        "session_id": session_id,
+        "status": "trained",
+
+        "dataset": {
+            "rows": int(len(dataframe)),
+            "columns": int(len(dataframe.columns)),
+            "target_column": target_column,
+        },
+
+        "selected_features": _json_safe(
+            selected_features
+        ),
+
+        "quantum_dimensions": (
+            int(quantum_features.shape[1])
+            if hasattr(
+                quantum_features,
+                "shape",
+            )
+            and len(quantum_features.shape) == 2
+            else None
+        ),
+
+        "training_result": public,
+    }
+
+
+# ============================================================
+# QUANTUM PREDICTION
+# ============================================================
+
+
+def _build_prediction_feature_map(
+    n_qubits: int,
+):
+
+    dev = qml.device(
+        "default.qubit",
+        wires=n_qubits,
+    )
+
+    @qml.qnode(dev)
+    def feature_map(x):
+
+        for i in range(n_qubits):
+
+            qml.RY(
+                x[i],
+                wires=i,
+            )
+
+        for i in range(n_qubits - 1):
+
+            qml.CNOT(
+                wires=[
+                    i,
+                    i + 1,
+                ]
+            )
+
+        return qml.state()
+
+    return feature_map
+
+
+def _predict_qsvm(
+    qsvm_result: dict[str, Any],
+    quantum_features,
+) -> dict[str, Any]:
+
+    qsvm = qsvm_result.get(
+        "qsvm"
+    )
+
+    scaler = qsvm_result.get(
+        "scaler"
+    )
+
+    training_data = qsvm_result.get(
+        "training_data"
+    )
+
+    if qsvm is None:
+
+        raise ValueError(
+            "QSVM model artifact is missing."
+        )
+
+    if scaler is None:
+
+        raise ValueError(
+            "QSVM scaler artifact is missing."
+        )
+
+    if training_data is None:
+
+        raise ValueError(
+            "QSVM training quantum data is missing."
+        )
+
+    quantum_features = pd.DataFrame(
+        quantum_features
+    )
+
+    scaled_sample = scaler.transform(
+        quantum_features
+    )
+
+    n_qubits = scaled_sample.shape[1]
+
+    feature_map = (
+        _build_prediction_feature_map(
+            n_qubits
+        )
+    )
+
+    kernel_row = []
+
+    for train_row in training_data:
+
+        kernel_value = quantum_kernel(
+            scaled_sample[0],
+            train_row,
+            feature_map,
+            n_qubits,
+        )
+
+        kernel_row.append(
+            kernel_value
+        )
+
+    kernel_matrix = [
+        kernel_row
+    ]
+
+    prediction = qsvm.predict(
+        kernel_matrix
+    )[0]
+
+    probability = None
+
+    if hasattr(
+        qsvm,
+        "predict_proba",
+    ):
+
+        probabilities = (
+            qsvm.predict_proba(
+                kernel_matrix
+            )[0]
+        )
+
+        if len(probabilities) > 1:
+
+            probability = float(
+                probabilities[1]
+            )
+
+    return {
+        "prediction": _json_safe(
+            prediction
+        ),
+        "class_1_probability": probability,
+    }
+
+
+def _predict_vqc(
+    vqc_result: dict[str, Any],
+    quantum_features,
+) -> dict[str, Any]:
+
+    model = vqc_result.get(
+        "model"
+    )
+
+    scaler = vqc_result.get(
+        "scaler"
+    )
+
+    weights = vqc_result.get(
+        "weights"
+    )
+
+    if model is None:
+
+        raise ValueError(
+            "VQC model artifact is missing."
+        )
+
+    if scaler is None:
+
+        raise ValueError(
+            "VQC scaler artifact is missing."
+        )
+
+    if weights is None:
+
+        weights = getattr(
+            model,
+            "weights",
+            None,
+        )
+
+    if weights is None:
+
+        raise ValueError(
+            "VQC trained weights are missing."
+        )
+
+    quantum_features = pd.DataFrame(
+        quantum_features
+    )
+
+    scaled_sample = scaler.transform(
+        quantum_features
+    )
+
+    probabilities = (
+        model.predict_proba(
+            scaled_sample,
+            weights,
+        )
+    )
+
+    probability = float(
+        probabilities[0]
+    )
+
+    prediction = int(
+        probability >= 0.5
+    )
+
+    return {
+        "prediction": prediction,
+        "class_1_probability": probability,
+    }
 
 
 # ============================================================
 # ROOT
 # ============================================================
 
+
 @app.get("/")
 def root():
+
     return {
         "name": "VITALIS",
         "description": (
             "Hybrid classical-quantum machine learning "
-            "platform for disease screening."
+            "platform for disease screening and research."
         ),
+        "version": "2.0.0",
         "status": "operational",
     }
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
-@app.api_route("/health", methods=["GET", "HEAD"])
+
+@app.api_route(
+    "/health",
+    methods=["GET", "HEAD"],
+)
 def health():
-    return {"status": "healthy"}
 
-
-# ============================================================
-# DISEASES
-# ============================================================
-
-@app.get("/diseases")
-def diseases():
     return {
-        "diseases": [
-            {
-                "id": "heart",
-                "name": "Cardiovascular Disease",
-                "status": "available",
-            },
-            {
-                "id": "breast_cancer",
-                "name": "Breast Cancer",
-                "status": "available",
-            },
-        ]
+        "status": "healthy",
+        "active_training_sessions": len(
+            TRAINING_SESSIONS
+        ),
     }
 
 
 # ============================================================
-# HEART PREDICTION
+# DATASET PROFILING
 # ============================================================
+
+
+@app.post("/upload/dataset")
+async def upload_dataset(
+    file: UploadFile = File(...),
+):
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No filename was provided.",
+        )
+
+    if not file.filename.lower().endswith(
+        ".csv"
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Please upload a CSV dataset.",
+        )
+
+    raw = await file.read()
+
+    if len(raw) > 10 * 1024 * 1024:
+
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "CSV file is too large. "
+                "Maximum size is 10 MB."
+            ),
+        )
+
+    try:
+
+        dataframe = _read_csv_upload(
+            raw
+        )
+
+        summary = _dataset_summary(
+            dataframe
+        )
+
+        return {
+            "filename": file.filename,
+            "status": "validated",
+            "summary": summary,
+            "preview": _json_safe(
+                dataframe.head(10)
+            ),
+        }
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Dataset profiling failed: {exc}"
+            ),
+        )
+
+
+# ============================================================
+# GENERIC TRAINING
+# ============================================================
+
+
+@app.post("/train/dataset")
+async def train_dataset(
+    file: UploadFile = File(...),
+    target_column: str | None = None,
+    quantum_components: int = 6,
+    test_size: float = 0.20,
+    random_state: int = 42,
+):
+
+    if not file.filename:
+
+        raise HTTPException(
+            status_code=400,
+            detail="No filename was provided.",
+        )
+
+    if not file.filename.lower().endswith(
+        ".csv"
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail="Please upload a CSV dataset.",
+        )
+
+    if not target_column:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "target_column is required. "
+                "Specify the column containing the class/label."
+            ),
+        )
+
+    if (
+        quantum_components < 1
+        or quantum_components > 20
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "quantum_components must be between 1 and 20."
+            ),
+        )
+
+    if not (
+        0.05 < test_size < 0.50
+    ):
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "test_size must be between 0.05 and 0.50."
+            ),
+        )
+
+    raw = await file.read()
+
+    if len(raw) > 10 * 1024 * 1024:
+
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "CSV file is too large. "
+                "Maximum size is 10 MB."
+            ),
+        )
+
+    try:
+
+        dataframe = _read_csv_upload(
+            raw
+        )
+
+        target_column = (
+            target_column.strip()
+        )
+
+        _validate_target(
+            dataframe,
+            target_column,
+        )
+
+        session_id = uuid.uuid4().hex
+
+        print()
+        print("=" * 70)
+        print("VITALIS API TRAINING")
+        print("=" * 70)
+
+        print(
+            f"Dataset       : {file.filename}"
+        )
+
+        print(
+            f"Rows          : {len(dataframe)}"
+        )
+
+        print(
+            f"Columns       : {len(dataframe.columns)}"
+        )
+
+        print(
+            f"Target        : {target_column}"
+        )
+
+        print(
+            f"Quantum dims  : {quantum_components}"
+        )
+
+        print(
+            f"Test size     : {test_size}"
+        )
+
+        print(
+            f"Random state  : {random_state}"
+        )
+
+        print("=" * 70)
+
+        result = run_training_pipeline(
+            dataframe,
+            target_column=target_column,
+            quantum_components=quantum_components,
+            test_size=test_size,
+            random_state=random_state,
+        )
+
+        TRAINING_SESSIONS[
+            session_id
+        ] = {
+            "filename": file.filename,
+            "dataframe": dataframe,
+            "target_column": target_column,
+            "result": result,
+        }
+
+        return _public_training_result(
+            result=result,
+            session_id=session_id,
+            dataframe=dataframe,
+            target_column=target_column,
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Training failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        )
+
+
+# ============================================================
+# TRAINING SESSION
+# ============================================================
+
+
+@app.get(
+    "/train/session/{session_id}"
+)
+def get_training_session(
+    session_id: str,
+):
+
+    session = TRAINING_SESSIONS.get(
+        session_id
+    )
+
+    if session is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Training session not found.",
+        )
+
+    return _public_training_result(
+        result=session["result"],
+        session_id=session_id,
+        dataframe=session["dataframe"],
+        target_column=session["target_column"],
+    )
+
+
+# ============================================================
+# GENERIC PREDICTION
+# ============================================================
+
+
+@app.post("/predict/dataset")
+def predict_dataset(
+    request: GenericPredictionRequest,
+):
+
+    session = TRAINING_SESSIONS.get(
+        request.session_id
+    )
+
+    if session is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Training session not found.",
+        )
+
+    result = session["result"]
+
+    artifacts = result.get(
+        "_artifacts",
+        {},
+    )
+
+    selected_features = (
+        artifacts.get(
+            "selected_features"
+        )
+    )
+
+    if selected_features is None:
+
+        X_train_selected = (
+            artifacts.get(
+                "X_train_selected"
+            )
+        )
+
+        if X_train_selected is not None:
+
+            selected_features = (
+                X_train_selected
+                .columns
+                .tolist()
+            )
+
+    if not selected_features:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Selected feature information is unavailable."
+            ),
+        )
+
+    missing = [
+        feature
+        for feature in selected_features
+        if feature not in request.features
+    ]
+
+    if missing:
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": (
+                    "Missing required features."
+                ),
+                "missing_features": missing,
+            },
+        )
+
+    try:
+
+        # ====================================================
+        # BUILD SAMPLE
+        # ====================================================
+
+        sample = pd.DataFrame(
+            [
+                {
+                    feature: request.features[feature]
+                    for feature in selected_features
+                }
+            ]
+        )
+
+        # ====================================================
+        # CLASSICAL MODELS
+        # ====================================================
+
+        classical_models = (
+            artifacts.get(
+                "classical_models"
+            )
+        )
+
+        classical_scaler = (
+            artifacts.get(
+                "classical_scaler"
+            )
+        )
+
+        if not classical_models:
+
+            raise ValueError(
+                "Classical models were not found."
+            )
+
+        sample_classical = (
+            sample.apply(
+                pd.to_numeric,
+                errors="raise",
+            )
+        )
+
+        if classical_scaler is not None:
+
+            sample_classical_scaled = (
+                classical_scaler.transform(
+                    sample_classical
+                )
+            )
+
+        else:
+
+            sample_classical_scaled = (
+                sample_classical
+            )
+
+        classical_predictions = {}
+
+        for (
+            model_name,
+            model,
+        ) in classical_models.items():
+
+            prediction = model.predict(
+                sample_classical_scaled
+            )[0]
+
+            probability = None
+
+            if hasattr(
+                model,
+                "predict_proba",
+            ):
+
+                probabilities = (
+                    model.predict_proba(
+                        sample_classical_scaled
+                    )[0]
+                )
+
+                if len(probabilities) > 1:
+
+                    probability = float(
+                        probabilities[1]
+                    )
+
+            classical_predictions[
+                model_name
+            ] = {
+                "prediction": _json_safe(
+                    prediction
+                ),
+                "class_1_probability": probability,
+            }
+
+        # ====================================================
+        # QUANTUM REDUCTION
+        # ====================================================
+
+        reducer = artifacts.get(
+            "reducer"
+        )
+
+        if reducer is None:
+
+            raise ValueError(
+                "Quantum feature reducer was not found."
+            )
+
+        quantum_reduced = (
+            reducer.transform(
+                sample
+            )
+        )
+
+        quantum_feature_names = (
+            reducer.get_feature_names()
+        )
+
+        quantum_sample = pd.DataFrame(
+            quantum_reduced,
+            columns=quantum_feature_names,
+        )
+
+        # ====================================================
+        # QSVM
+        # ====================================================
+
+        # IMPORTANT:
+        #
+        # train_pipeline stores the fitted QSVM
+        # result directly as quantum_result.
+        #
+        # Therefore:
+        #
+        # quantum_result = {
+        #     "qsvm": SVC(...),
+        #     "scaler": ...,
+        #     "training_data": ...,
+        #     ...
+        # }
+        #
+        # We must NOT do:
+        #
+        # quantum_result["qsvm"]
+        #
+        # because that gives the raw SVC.
+
+        qsvm_result = artifacts.get(
+            "quantum_result"
+        )
+
+        if qsvm_result is None:
+
+            raise ValueError(
+                "QSVM training result was not found."
+            )
+
+        qsvm_prediction = (
+            _predict_qsvm(
+                qsvm_result,
+                quantum_sample,
+            )
+        )
+
+        # ====================================================
+        # VQC
+        # ====================================================
+
+        vqc_result = artifacts.get(
+            "vqc_result"
+        )
+
+        if vqc_result is None:
+
+            raise ValueError(
+                "VQC training result was not found."
+            )
+
+        vqc_prediction = (
+            _predict_vqc(
+                vqc_result,
+                quantum_sample,
+            )
+        )
+
+        # ====================================================
+        # BUILD MODEL RESPONSE
+        # ====================================================
+
+        models = {}
+
+        for (
+            model_name,
+            prediction,
+        ) in classical_predictions.items():
+
+            models[
+                model_name
+            ] = {
+                **prediction,
+                "family": "classical",
+            }
+
+        models[
+            "Quantum Kernel SVM"
+        ] = {
+            **qsvm_prediction,
+            "family": "quantum",
+        }
+
+        models[
+            "Variational Quantum Classifier"
+        ] = {
+            **vqc_prediction,
+            "family": "quantum",
+        }
+
+        # ====================================================
+        # CONSENSUS
+        # ====================================================
+
+        prediction_values = []
+
+        for model_result in models.values():
+
+            prediction_value = (
+                model_result.get(
+                    "prediction"
+                )
+            )
+
+            if prediction_value is not None:
+
+                try:
+
+                    prediction_values.append(
+                        int(
+                            prediction_value
+                        )
+                    )
+
+                except Exception:
+                    pass
+
+        consensus = None
+
+        if prediction_values:
+
+            class_1_votes = sum(
+                value == 1
+                for value in prediction_values
+            )
+
+            class_0_votes = sum(
+                value == 0
+                for value in prediction_values
+            )
+
+            total_models = len(
+                prediction_values
+            )
+
+            consensus_prediction = (
+                1
+                if class_1_votes > class_0_votes
+                else 0
+            )
+
+            consensus = {
+                "prediction": consensus_prediction,
+                "class_0_votes": class_0_votes,
+                "class_1_votes": class_1_votes,
+                "total_models": total_models,
+                "agreeing_models": max(
+                    class_0_votes,
+                    class_1_votes,
+                ),
+            }
+
+        return {
+            "session_id": request.session_id,
+
+            "models": models,
+
+            "consensus": consensus,
+
+            "features_used": selected_features,
+
+            "quantum_features": quantum_feature_names,
+        }
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Prediction failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        )
+
+
+# ============================================================
+# LEGACY DISEASE ENDPOINTS
+# ============================================================
+
 
 @app.post("/predict/heart")
-def predict_heart_endpoint(patient: HeartPatient):
+def predict_heart_endpoint(
+    patient: dict,
+):
+
     try:
-        return predict_heart(patient.model_dump())
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return predict_heart(
+            patient
+        )
 
+    except Exception as exc:
 
-# ============================================================
-# BREAST CANCER PREDICTION
-# ============================================================
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
 
 @app.post("/predict/breast-cancer")
-def predict_breast_cancer_endpoint(patient: BreastCancerPatient):
-    try:
-        return predict_breast_cancer(patient.model_dump())
+def predict_breast_cancer_endpoint(
+    patient: dict,
+):
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    try:
+
+        return predict_breast_cancer(
+            patient
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
 
 
 # ============================================================
 # BENCHMARK
 # ============================================================
 
+
 @app.get("/benchmark")
 def benchmark():
+
     try:
+
         return get_all_benchmarks()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
+
+@app.get(
+    "/benchmark/session/{session_id}"
+)
+def benchmark_session(
+    session_id: str,
+):
+
+    session = TRAINING_SESSIONS.get(
+        session_id
+    )
+
+    if session is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Training session not found.",
+        )
+
+    try:
+
+        benchmark_result = (
+            get_session_benchmark(
+                session["result"]
+            )
+        )
+
+        return {
+            "session_id": session_id,
+            "benchmark": _json_safe(
+                benchmark_result
+            ),
+        }
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Benchmark generation failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        )
 
 
 # ============================================================
-# HEART EXPLAINABILITY
+# GENERIC DATASET EXPLAINABILITY
 # ============================================================
+
+
+@app.post("/explain/dataset")
+def explain_dataset(
+    request: GenericPredictionRequest,
+):
+    """
+    Generate model-agnostic local feature influence
+    information for a trained dataset session.
+
+    Uses the same fitted training artifacts as prediction.
+    No model is retrained here.
+    """
+
+    session = TRAINING_SESSIONS.get(
+        request.session_id
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Training session not found.",
+        )
+
+    result = session["result"]
+    artifacts = result.get("_artifacts", {})
+
+    selected_features = artifacts.get("selected_features")
+
+    if selected_features is None:
+        X_train_selected = artifacts.get("X_train_selected")
+        if X_train_selected is not None:
+            selected_features = X_train_selected.columns.tolist()
+
+    if not selected_features:
+        raise HTTPException(
+            status_code=500,
+            detail="Selected feature information is unavailable.",
+        )
+
+    missing = [
+        feature
+        for feature in selected_features
+        if feature not in request.features
+    ]
+
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Missing required features.",
+                "missing_features": missing,
+            },
+        )
+
+    try:
+        sample = pd.DataFrame([
+            {
+                feature: request.features[feature]
+                for feature in selected_features
+            }
+        ])
+
+        sample_numeric = sample.apply(
+            pd.to_numeric,
+            errors="raise",
+        )
+
+        classical_models = artifacts.get("classical_models")
+        classical_scaler = artifacts.get("classical_scaler")
+
+        if not classical_models:
+            raise ValueError("Classical models were not found.")
+
+        if classical_scaler is not None:
+            sample_scaled = classical_scaler.transform(sample_numeric)
+        else:
+            sample_scaled = sample_numeric
+
+        feature_influence = {}
+
+        logistic_model = classical_models.get("Logistic Regression")
+        if logistic_model is not None:
+            coefficients = logistic_model.coef_[0]
+            feature_influence["Logistic Regression"] = {
+                feature: float(coefficients[index])
+                for index, feature in enumerate(selected_features)
+            }
+
+        random_forest = classical_models.get("Random Forest")
+        if random_forest is not None:
+            importances = random_forest.feature_importances_
+            feature_influence["Random Forest"] = {
+                feature: float(importances[index])
+                for index, feature in enumerate(selected_features)
+            }
+
+        perturbation = {}
+
+        for index, feature in enumerate(selected_features):
+            original_value = float(sample_numeric.iloc[0, index])
+            delta = max(abs(original_value) * 0.05, 0.05)
+
+            lower = sample_numeric.copy()
+            upper = sample_numeric.copy()
+            lower.iloc[0, index] = original_value - delta
+            upper.iloc[0, index] = original_value + delta
+
+            if classical_scaler is not None:
+                lower_scaled = classical_scaler.transform(lower)
+                upper_scaled = classical_scaler.transform(upper)
+            else:
+                lower_scaled = lower
+                upper_scaled = upper
+
+            model_changes = {}
+
+            for model_name, model in classical_models.items():
+                if not hasattr(model, "predict_proba"):
+                    continue
+
+                lower_probability = float(
+                    model.predict_proba(lower_scaled)[0][1]
+                )
+                upper_probability = float(
+                    model.predict_proba(upper_scaled)[0][1]
+                )
+
+                model_changes[model_name] = {
+                    "lower_probability": lower_probability,
+                    "upper_probability": upper_probability,
+                    "change": upper_probability - lower_probability,
+                }
+
+            perturbation[feature] = model_changes
+
+        feature_scores = {}
+
+        for feature, models in perturbation.items():
+            changes = [
+                abs(model_result["change"])
+                for model_result in models.values()
+            ]
+            feature_scores[feature] = (
+                float(sum(changes) / len(changes))
+                if changes
+                else 0.0
+            )
+
+        ranked_features = sorted(
+            feature_scores.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+
+        return {
+            "session_id": request.session_id,
+            "method": (
+                "Local perturbation sensitivity "
+                "plus model-native feature importance"
+            ),
+            "features": selected_features,
+            "model_native_importance": _json_safe(feature_influence),
+            "local_perturbation": _json_safe(perturbation),
+            "ranked_features": [
+                {"feature": feature, "score": score}
+                for feature, score in ranked_features
+            ],
+            "note": (
+                "Feature influence indicates model sensitivity and "
+                "association with the prediction. It does not establish "
+                "causation or constitute a medical diagnosis."
+            ),
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Explainability failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+        )
+
+
+# ============================================================
+# LEGACY EXPLAINABILITY
+# ============================================================
+
 
 @app.post("/explain/heart")
-def explain_heart_endpoint(patient: HeartPatient):
+def explain_heart_endpoint(
+    patient: dict,
+):
+
     try:
-        return explain_heart(patient.model_dump())
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return explain_heart(
+            patient
+        )
 
+    except Exception as exc:
 
-# ============================================================
-# BREAST CANCER EXPLAINABILITY
-# ============================================================
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
+
 
 @app.post("/explain/breast-cancer")
-def explain_breast_cancer_endpoint(patient: BreastCancerPatient):
+def explain_breast_cancer_endpoint(
+    patient: dict,
+):
+
     try:
-        return explain_breast_cancer(patient.model_dump())
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return explain_breast_cancer(
+            patient
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
 
 
 # ============================================================
-# FAST CHAT HELPERS
+# LEGACY CHAT
 # ============================================================
+
 
 def _q(text: str) -> str:
-    return " ".join(text.lower().strip().split())
+
+    return " ".join(
+        text.lower()
+        .strip()
+        .split()
+    )
 
 
-def _direct_answer(disease, question, patient, result):
-    """Handle high-confidence questions directly from VITALIS data.
-
-    The LLM is still used for natural-language questions, but these answers
-    should never depend on generation when the required information is already
-    present in the screening result.
-    """
+def _direct_answer(
+    disease: str,
+    question: str,
+    patient: dict,
+    result: dict,
+) -> str | None:
 
     q = _q(question)
 
-    # ------------------------------------------------------------
-    # Result / "am I okay?" intent
-    # ------------------------------------------------------------
-
-    simple_result_phrases = (
-        "am i okay",
-        "am i ok",
-        "is everything okay",
-        "is everything ok",
-        "is the result okay",
-        "is the result ok",
-        "is my result okay",
-        "is my result ok",
-        "is this okay",
-        "is this ok",
-        "does this mean i am okay",
-        "does this mean im okay",
-        "does this mean i'm okay",
-        "does this mean i am ok",
-        "does this mean im ok",
-        "does this mean i'm ok",
-        "explain in simple language",
-        "in simple language",
-        "simple language",
-        "what does this result mean",
-        "what does the result mean",
-        "what do the results mean",
-        "explain the result",
-        "explain my result",
-        "explain the prediction",
-        "what does this prediction mean",
-        "what does the prediction mean",
-    )
-
-    if any(phrase in q for phrase in simple_result_phrases):
-        label = result.get("prediction_label")
-        prediction = result.get("prediction")
-        consensus = result.get("consensus") or {}
-
-        agreeing = consensus.get("agreeing_models")
-        total = consensus.get("total_models")
-        percentage = consensus.get("percentage")
-
-        if label:
-            if prediction == 0 or "lower likelihood" in label.lower():
-                meaning = (
-                    "The screening result is reassuring: the models found "
-                    "a lower likelihood of the screened condition for this input."
-                )
-            else:
-                meaning = (
-                    "The screening result indicates a higher likelihood "
-                    "of the screened condition for this input."
-                )
-
-            if agreeing is not None and total is not None and percentage is not None:
-                return (
-                    f"{meaning} {agreeing} of {total} models agree "
-                    f"({float(percentage):.0f}%). "
-                    "That does not mean you are definitely healthy or have the disease; "
-                    "VITALIS is a screening tool, not a medical diagnosis."
-                )
-
-            return (
-                f"{meaning} "
-                "This is a screening prediction, not a medical diagnosis."
-            )
-
-    # ------------------------------------------------------------
-    # Model comparison: use the actual outputs, never an LLM guess.
-    # ------------------------------------------------------------
-
-    comparison_phrases = (
-        "how did the classical and quantum models differ",
-        "how do the classical and quantum models differ",
-        "classical and quantum models differ",
-        "compare classical and quantum models",
-        "difference between classical and quantum models",
-        "classical vs quantum models",
-        "classical versus quantum models",
-    )
-
-    if any(p in q for p in comparison_phrases):
-        models = result.get("models") or {}
-
-        classical = [
-            ("Logistic Regression", models.get("logistic_regression")),
-            ("Random Forest", models.get("random_forest")),
-            ("RBF SVM", models.get("rbf_svm")),
-        ]
-
-        quantum = [
-            ("QSVM", models.get("qsvm")),
-            ("VQC", models.get("vqc")),
-        ]
-
-        def summarize(group):
-            available = [
-                (name, data)
-                for name, data in group
-                if isinstance(data, dict)
-            ]
-
-            counts = {0: 0, 1: 0}
-
-            for _, data in available:
-                pred = data.get("prediction")
-
-                if pred in (0, 1):
-                    counts[pred] += 1
-
-            if not available:
-                return "No model outputs were returned."
-
-            parts = [
-                f"{len(available)} models",
-                f"{counts[0]} predicted class 0",
-                f"{counts[1]} predicted class 1",
-            ]
-
-            probs = []
-
-            for name, data in available:
-                p0 = data.get("class_0_probability")
-                p1 = data.get("class_1_probability")
-
-                if isinstance(p0, (int, float)) and isinstance(p1, (int, float)):
-                    probs.append(
-                        f"{name}: {float(p0) * 100:.1f}% class 0 / "
-                        f"{float(p1) * 100:.1f}% class 1"
-                    )
-
-            return "; ".join(parts) + ". " + (
-                "Probability scores — " + "; ".join(probs) + "."
-                if probs
-                else ""
-            )
+    if q in {
+        "hi",
+        "hello",
+        "hey",
+        "hii",
+        "yo",
+    }:
 
         return (
-            "The classical group contains Logistic Regression, Random Forest, "
-            "and RBF SVM. The quantum group contains QSVM and VQC. "
-            "For this screening: Classical — "
-            + summarize(classical)
-            + " Quantum — "
-            + summarize(quantum)
-            + " The models use different approaches, so their probability scores "
-            "and predictions can differ; this comparison does not by itself show "
-            "that one group is better."
+            "Hi. Ask me about the screening result, "
+            "model outputs, features, or how VITALIS works."
         )
 
-    # ------------------------------------------------------------
-    # Basic conversation
-    # ------------------------------------------------------------
+    if q in {
+        "thanks",
+        "thank you",
+        "thx",
+        "thank u",
+    }:
 
-    if q in {"hi", "hello", "hey", "hii", "yo"}:
-        return (
-            "Hi. Ask me about your screening result, model outputs, "
-            "features, or how VITALIS works."
-        )
-
-    if q in {"thanks", "thank you", "thx", "thank u"}:
         return "You're welcome."
 
-    # ------------------------------------------------------------
-    # Result / prediction wording
-    # ------------------------------------------------------------
-
     if any(
-        x in q
-        for x in (
+        phrase in q
+        for phrase in (
             "what is my result",
             "what was my result",
             "what is the prediction",
@@ -448,115 +1729,168 @@ def _direct_answer(disease, question, patient, result):
             "show my result",
         )
     ):
-        label = result.get("prediction_label")
+
+        label = result.get(
+            "prediction_label"
+        )
 
         if label:
-            consensus = result.get("consensus") or {}
-            agreeing = consensus.get("agreeing_models")
-            total = consensus.get("total_models")
 
-            if agreeing is not None and total is not None:
+            consensus = (
+                result.get(
+                    "consensus"
+                )
+                or {}
+            )
+
+            agreeing = (
+                consensus.get(
+                    "agreeing_models"
+                )
+            )
+
+            total = (
+                consensus.get(
+                    "total_models"
+                )
+            )
+
+            if (
+                agreeing is not None
+                and total is not None
+            ):
+
                 return (
                     f"The screening result is {label}. "
                     f"{agreeing} of {total} models agree."
                 )
 
-            return f"The screening result is {label}."
-
-        pred = result.get("prediction")
-
-        if pred is not None:
-            return f"The screening prediction is class {pred}."
-
-    # ------------------------------------------------------------
-    # Individual model questions
-    # ------------------------------------------------------------
-
-    models = result.get("models") or {}
-
-    model_aliases = {
-        "logistic regression": "logistic_regression",
-        "logistic": "logistic_regression",
-        "random forest": "random_forest",
-        "rbf svm": "rbf_svm",
-        "svm": "rbf_svm",
-        "qsvm": "qsvm",
-        "quantum svm": "qsvm",
-        "vqc": "vqc",
-        "variational quantum classifier": "vqc",
-    }
-
-    for alias, key in model_aliases.items():
-        if (
-            alias in q
-            and key in models
-            and any(
-                x in q
-                for x in (
-                    "probability",
-                    "score",
-                    "predict",
-                    "result",
-                    "output",
-                )
+            return (
+                f"The screening result is {label}."
             )
-        ):
-            m = models[key]
-            pred = m.get("prediction")
-            p1 = m.get("class_1_probability")
 
-            if pred is not None and isinstance(p1, (int, float)):
-                return (
-                    f"{alias.title()} predicted class {pred}, "
-                    f"with a {float(p1) * 100:.1f}% class-1 probability."
-                )
+        prediction = result.get(
+            "prediction"
+        )
 
-            if pred is not None:
-                return f"{alias.title()} predicted class {pred}."
+        if prediction is not None:
 
-    # ------------------------------------------------------------
-    # Heart feature questions
-    # ------------------------------------------------------------
+            return (
+                f"The screening prediction is class {prediction}."
+            )
+
+    if any(
+        phrase in q
+        for phrase in (
+            "classical vs quantum",
+            "classical versus quantum",
+            "difference between classical and quantum",
+            "compare classical and quantum",
+            "how did the classical and quantum models differ",
+        )
+    ):
+
+        models = (
+            result.get(
+                "models"
+            )
+            or {}
+        )
+
+        classical = [
+            "logistic_regression",
+            "random_forest",
+            "rbf_svm",
+        ]
+
+        quantum = [
+            "qsvm",
+            "vqc",
+        ]
+
+        classical_available = [
+            name
+            for name in classical
+            if name in models
+        ]
+
+        quantum_available = [
+            name
+            for name in quantum
+            if name in models
+        ]
+
+        return (
+            "VITALIS uses Logistic Regression, Random Forest, "
+            "and RBF SVM as classical models, while QSVM and "
+            "VQC represent the quantum-model approaches. "
+            f"The current result contains "
+            f"{len(classical_available)} classical and "
+            f"{len(quantum_available)} quantum model outputs. "
+            "Differences in their predictions are measured "
+            "from the actual model outputs; this comparison "
+            "does not by itself establish that one approach "
+            "is superior."
+        )
 
     if disease == "heart":
 
-        if "oldpeak" in q or "st depression" in q:
-            if any(x in q for x in ("my", "mine", "value", "what is")):
-                v = patient.get("oldpeak")
+        if "oldpeak" in q:
 
-                if v is not None:
-                    return f"Your oldpeak value is {v}."
-
-            return "Oldpeak measures ST-segment depression during exercise."
-
-        if any(
-            x in q
-            for x in (
-                "heart rate",
-                "thalach",
-                "maximum heart rate",
+            value = patient.get(
+                "oldpeak"
             )
-        ):
-            v = patient.get("thalach")
 
-            if v is not None and any(
-                x in q
-                for x in (
-                    "my",
-                    "mine",
-                    "value",
-                    "what is",
+            if (
+                value is not None
+                and any(
+                    x in q
+                    for x in (
+                        "my",
+                        "mine",
+                        "value",
+                        "what is",
+                    )
                 )
             ):
-                return f"Your maximum heart rate is {v:g} bpm."
+
+                return (
+                    f"Your oldpeak value is {value}."
+                )
 
             return (
-                "Maximum heart rate (thalach) is the peak heart rate "
-                "recorded during the test."
+                "Oldpeak is the coded ST-segment "
+                "depression feature used by the heart "
+                "screening dataset."
             )
 
-        if "chest pain" in q or "my cp" in q:
-            v = patient.get("cp")
+        if (
+            "heart rate" in q
+            or "thalach" in q
+            or "maximum heart rate" in q
+        ):
+
+            value = patient.get(
+                "thalach"
+            )
+
+            if value is not None:
+
+                return (
+                    f"Your maximum heart rate value "
+                    f"is {value} bpm."
+                )
+
+            return (
+                "Maximum heart rate (thalach) is the "
+                "peak heart rate recorded during the test."
+            )
+
+        if "chest pain" in q:
+
+            value = patient.get(
+                "cp"
+            )
 
             names = {
                 1: "typical angina",
@@ -565,314 +1899,52 @@ def _direct_answer(disease, question, patient, result):
                 4: "asymptomatic",
             }
 
-            if v is not None and any(
-                x in q
-                for x in (
-                    "my",
-                    "mine",
-                    "value",
-                    "what is",
-                )
-            ):
-                n = int(v)
+            if value is not None:
+
+                number = int(value)
+
                 return (
-                    f"Your chest pain type is {n} — "
-                    f"{names.get(n, 'unknown')}."
+                    f"Your chest pain type is {number} — "
+                    f"{names.get(number, 'unknown')}."
                 )
 
-            return (
-                "Chest pain type is the coded category used by "
-                "the screening model."
+        if "age" in q:
+
+            value = patient.get(
+                "age"
             )
 
-        if (
-            "major vessel" in q
-            or "my ca" in q
-            or "number of vessels" in q
-        ):
-            v = patient.get("ca")
+            if value is not None:
 
-            if v is not None and any(
-                x in q
-                for x in (
-                    "my",
-                    "mine",
-                    "value",
-                    "what is",
-                )
-            ):
-                return f"Your major-vessel value is {int(v)}."
-
-            return (
-                "The major-vessel value (ca) represents the number "
-                "of major vessels recorded in the dataset."
-            )
-
-        if (
-            "thalassemia" in q
-            or "my thal" in q
-            or "thal" in q
-        ):
-            v = patient.get("thal")
-
-            names = {
-                3: "normal",
-                6: "fixed defect",
-                7: "reversible defect",
-            }
-
-            if v is not None and any(
-                x in q
-                for x in (
-                    "my",
-                    "mine",
-                    "value",
-                    "what is",
-                )
-            ):
-                n = int(v)
                 return (
-                    f"Your thal value is {n} — "
-                    f"{names.get(n, 'unknown')}."
+                    f"Your age is {value:g} years."
                 )
-
-            return (
-                "Thal is the coded thalassemia-related feature "
-                "used by the heart screening model."
-            )
-
-        # Keep this last so generic questions containing "age"
-        # do not steal natural-language result questions.
-
-        if "age" in q and any(
-            x in q
-            for x in (
-                "my",
-                "mine",
-                "what is",
-                "how old",
-            )
-        ):
-            v = patient.get("age")
-
-            if v is not None:
-                return f"Your age is {v:g} years."
-
-    # ------------------------------------------------------------
-    # Breast-cancer feature questions
-    # ------------------------------------------------------------
 
     if disease == "breast_cancer":
-        normalized = q.replace(" ", "_")
+
+        normalized = q.replace(
+            " ",
+            "_",
+        )
 
         for key, value in patient.items():
+
             if key.lower() in normalized:
-                return f"Your {key.replace('_', ' ')} value is {value}."
+
+                return (
+                    f"Your {key.replace('_', ' ')} "
+                    f"value is {value}."
+                )
 
     return None
 
-
-def _model_comparison_answer(result: dict) -> str | None:
-    """Give a short deterministic comparison without calling Groq."""
-
-    models = result.get("models") or {}
-
-    if not all(
-        name in models
-        for name in (
-            "logistic_regression",
-            "random_forest",
-            "rbf_svm",
-            "qsvm",
-            "vqc",
-        )
-    ):
-        return None
-
-    classical_names = {
-        "logistic_regression": "Logistic Regression",
-        "random_forest": "Random Forest",
-        "rbf_svm": "RBF SVM",
-    }
-
-    quantum_names = {
-        "qsvm": "QSVM",
-        "vqc": "VQC",
-    }
-
-    def fmt_group(group):
-        parts = []
-
-        for key, name in group.items():
-            m = models[key]
-
-            pred = "class 1" if m.get("prediction") == 1 else "class 0"
-            p = m.get("class_1_probability")
-
-            if isinstance(p, (int, float)):
-                parts.append(
-                    f"{name}: {pred} ({p * 100:.1f}% class-1)"
-                )
-            else:
-                parts.append(f"{name}: {pred}")
-
-        return "; ".join(parts)
-
-    return (
-        "The classical models were "
-        + fmt_group(classical_names)
-        + ". "
-        "The quantum models were "
-        + fmt_group(quantum_names)
-        + ". "
-        "So the main difference is that the first three use "
-        "classical machine-learning methods, while QSVM and VQC "
-        "use quantum-model approaches; their predictions can "
-        "differ on the same input."
-    )
-
-
-def _top_features_answer(explainability: dict | None) -> str | None:
-    if not explainability:
-        return None
-
-    groups = []
-
-    for family in ("classical", "quantum"):
-        for model, items in (explainability.get(family) or {}).items():
-            if items:
-                top = max(
-                    items,
-                    key=lambda x: float(x.get("importance", 0)),
-                )
-
-                groups.append(
-                    (
-                        float(top.get("importance", 0)),
-                        top.get("feature"),
-                        model,
-                    )
-                )
-
-    if not groups:
-        return None
-
-    groups.sort(reverse=True)
-
-    names = []
-    seen = set()
-
-    for _, feature, _ in groups:
-        if feature and feature not in seen:
-            names.append(feature)
-            seen.add(feature)
-
-        if len(names) == 3:
-            break
-
-    if not names:
-        return None
-
-    return (
-        "The strongest features in the supplied model explanations "
-        "were " + ", ".join(names) + "."
-    )
-
-
-def _deterministic_explanation(
-    question: str,
-    result: dict,
-    explainability: dict | None,
-) -> str | None:
-
-    q = _q(question)
-
-    if (
-        "classical" in q
-        and "quantum" in q
-        and any(
-            x in q
-            for x in (
-                "differ",
-                "difference",
-                "compare",
-                "same",
-            )
-        )
-    ):
-        return _model_comparison_answer(result)
-
-    if any(
-        x in q
-        for x in (
-            "what influenced",
-            "influenced the prediction",
-            "most important",
-            "most important feature",
-            "feature importance",
-            "important factor",
-        )
-    ):
-        return _top_features_answer(explainability)
-
-    if (
-        "why" in q
-        and any(
-            x in q
-            for x in (
-                "predict",
-                "prediction",
-                "result",
-                "models",
-            )
-        )
-    ):
-        top = _top_features_answer(explainability)
-
-        if top:
-            return (
-                top
-                + " These are model influences, not proof "
-                "that any feature caused the condition."
-            )
-
-    return None
-
-
-def _cache_key(data: dict) -> str:
-    return json.dumps(
-        data,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-@lru_cache(maxsize=64)
-def _cached_explainability(disease: str, data_json: str):
-    data = json.loads(data_json)
-
-    return (
-        explain_heart(data)
-        if disease == "heart"
-        else explain_breast_cancer(data)
-    )
-
-
-# ============================================================
-# AI CHAT
-# ============================================================
 
 @app.post("/chat")
-def chat_endpoint(request: ChatRequest):
+def chat_endpoint(
+    request: ChatRequest,
+):
     try:
-        disease = request.disease.lower().strip()
         question = request.question.strip()
-
-        if disease not in {"heart", "breast_cancer"}:
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported disease. Use 'heart' or 'breast_cancer'.",
-            )
 
         if not question:
             raise HTTPException(
@@ -880,13 +1952,72 @@ def chat_endpoint(request: ChatRequest):
                 detail="Question cannot be empty.",
             )
 
-        # FAST PATH: no explainability and no Groq.
+        # ========================================================
+        # GENERIC SESSION CHAT
+        # ========================================================
+
+        if request.session_id:
+            session = TRAINING_SESSIONS.get(
+                request.session_id
+            )
+
+            if session is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Training session not found.",
+                )
+
+            result = session["result"]
+
+            # Public training information
+            dataset_context = _public_training_result(
+                result=result,
+                session_id=request.session_id,
+                dataframe=session["dataframe"],
+                target_column=session["target_column"],
+            )
+
+            # Benchmark information
+            try:
+                benchmark_context = get_session_benchmark(
+                    result
+                )
+            except Exception:
+                benchmark_context = None
+
+            explanation = explain_prediction(
+                disease=request.disease,
+                patient_data=request.patient_data or {},
+                prediction_result=request.prediction_result or {},
+                question=question,
+                explainability_result=None,
+                dataset_context=dataset_context,
+                benchmark_context=benchmark_context,
+            )
+
+            return {
+                "session_id": request.session_id,
+                "model": "openai/gpt-oss-20b",
+                "question": question,
+                "explanation": explanation,
+            }
+
+        # ========================================================
+        # LEGACY DISEASE CHAT
+        # ========================================================
+
+        disease = (
+            request.disease or "unknown"
+        ).lower().strip()
+
+        patient_data = request.patient_data or {}
+        prediction_result = request.prediction_result or {}
 
         direct = _direct_answer(
-            disease,
-            question,
-            request.patient_data,
-            request.prediction_result,
+            disease=disease,
+            question=question,
+            patient=patient_data,
+            result=prediction_result,
         )
 
         if direct is not None:
@@ -897,73 +2028,12 @@ def chat_endpoint(request: ChatRequest):
                 "explanation": direct,
             }
 
-        # Deterministic answers for common VITALIS questions.
-        # These avoid both explainability work and Groq latency where possible.
-
-        deterministic = _deterministic_explanation(
-            question,
-            request.prediction_result,
-            None,
-        )
-
-        if deterministic is not None:
-            return {
-                "disease": disease,
-                "model": "vitalis-direct",
-                "question": question,
-                "explanation": deterministic,
-            }
-
-        # Only compute explainability when the question actually needs it.
-
-        explainability_result = None
-
-        if any(
-            x in _q(question)
-            for x in (
-                "why",
-                "influenc",
-                "feature importance",
-                "important feature",
-                "important factor",
-                "reason for",
-                "explain prediction",
-                "explain",
-                "okay",
-                "ok",
-                "concerned",
-                "worried",
-                "mean",
-                "healthy",
-                "serious",
-                "risk",
-            )
-        ):
-            explainability_result = _cached_explainability(
-                disease,
-                _cache_key(request.patient_data),
-            )
-
-            deterministic = _deterministic_explanation(
-                question,
-                request.prediction_result,
-                explainability_result,
-            )
-
-            if deterministic is not None:
-                return {
-                    "disease": disease,
-                    "model": "vitalis-direct",
-                    "question": question,
-                    "explanation": deterministic,
-                }
-
         explanation = explain_prediction(
             disease=disease,
-            patient_data=request.patient_data,
-            prediction_result=request.prediction_result,
+            patient_data=patient_data,
+            prediction_result=prediction_result,
             question=question,
-            explainability_result=explainability_result,
+            explainability_result=None,
         )
 
         return {
@@ -976,8 +2046,26 @@ def chat_endpoint(request: ChatRequest):
     except HTTPException:
         raise
 
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"{type(e).__name__}: {e}",
+            detail=(
+                f"{type(exc).__name__}: {exc}"
+            ),
         )
+
+# ============================================================
+# LOCAL DEVELOPMENT
+# ============================================================
+
+
+if __name__ == "__main__":
+
+    import uvicorn
+
+    uvicorn.run(
+        "backend.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+    )

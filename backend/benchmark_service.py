@@ -30,6 +30,18 @@ def load_json(filename):
         return json.load(file)
 
 
+def _metric(data, *names):
+    """
+    Return the first available metric from the supplied names.
+    """
+
+    for name in names:
+        if name in data:
+            return float(data[name])
+
+    return 0.0
+
+
 def normalize_model(
     model_name,
     family,
@@ -38,6 +50,9 @@ def normalize_model(
     """
     Convert a benchmark result into the common
     VITALIS benchmark format.
+
+    Input metrics are expected to be in the range 0-1.
+    Output metrics are percentages.
     """
 
     result = {
@@ -45,32 +60,44 @@ def normalize_model(
         "family": family,
 
         "accuracy": round(
-            float(data.get("accuracy", 0.0)) * 100,
+            _metric(data, "accuracy") * 100,
             2
         ),
 
         "precision": round(
-            float(data.get("precision", 0.0)) * 100,
+            _metric(data, "precision") * 100,
             2
         ),
 
         "sensitivity": round(
-            float(data.get("sensitivity", 0.0)) * 100,
+            _metric(
+                data,
+                "sensitivity",
+                "recall"
+            ) * 100,
             2
         ),
 
         "specificity": round(
-            float(data.get("specificity", 0.0)) * 100,
+            _metric(data, "specificity") * 100,
             2
         ),
 
         "f1_score": round(
-            float(data.get("f1_score", 0.0)) * 100,
+            _metric(
+                data,
+                "f1_score",
+                "f1"
+            ) * 100,
             2
         ),
 
         "roc_auc": round(
-            float(data.get("roc_auc", 0.0)) * 100,
+            _metric(
+                data,
+                "roc_auc",
+                "roc_auc_score"
+            ) * 100,
             2
         ),
     }
@@ -95,13 +122,21 @@ def normalize_model(
         )
 
     # --------------------------------------------------------
-    # Training time
+    # Training / evaluation timing
     # --------------------------------------------------------
 
     if "training_time_seconds" in data:
         result["training_time_seconds"] = round(
             float(
                 data["training_time_seconds"]
+            ),
+            4
+        )
+
+    if "evaluation_time_seconds" in data:
+        result["evaluation_time_seconds"] = round(
+            float(
+                data["evaluation_time_seconds"]
             ),
             4
         )
@@ -143,6 +178,219 @@ def normalize_model(
         )
 
     return result
+
+
+# ============================================================
+# GENERIC SESSION BENCHMARK
+# ============================================================
+
+def get_session_benchmark(training_result):
+    """
+    Build a unified benchmark from the result of the
+    generic VITALIS training pipeline.
+
+    Expected pipeline structure:
+
+        {
+            "classical": {
+                "metrics": {
+                    ...
+                }
+            },
+
+            "quantum": {
+                "qsvm": {
+                    "metrics": {...}
+                },
+
+                "vqc": {
+                    "metrics": {...}
+                }
+            }
+        }
+
+    This function is dataset-independent.
+    """
+
+    if not isinstance(training_result, dict):
+        raise ValueError(
+            "training_result must be a dictionary."
+        )
+
+    models = []
+
+    # ========================================================
+    # CLASSICAL MODELS
+    # ========================================================
+
+    classical = training_result.get(
+        "classical",
+        {}
+    )
+
+    classical_metrics = classical.get(
+        "metrics",
+        {}
+    )
+
+    classical_display_names = {
+        "logistic_regression":
+            "Logistic Regression",
+
+        "random_forest":
+            "Random Forest",
+
+        "rbf_svm":
+            "RBF SVM",
+
+        # Also support display-name keys.
+        "Logistic Regression":
+            "Logistic Regression",
+
+        "Random Forest":
+            "Random Forest",
+
+        "RBF SVM":
+            "RBF SVM",
+    }
+
+    for source_name, display_name in classical_display_names.items():
+
+        if source_name not in classical_metrics:
+            continue
+
+        models.append(
+            normalize_model(
+                model_name=display_name,
+                family="classical",
+                data=classical_metrics[source_name],
+            )
+        )
+
+    # ========================================================
+    # QUANTUM KERNEL SVM
+    # ========================================================
+
+    quantum = training_result.get(
+        "quantum",
+        {}
+    )
+
+    qsvm = quantum.get(
+        "qsvm",
+        {}
+    )
+
+    qsvm_metrics = qsvm.get(
+        "metrics",
+        {}
+    )
+
+    if qsvm_metrics:
+        models.append(
+            normalize_model(
+                model_name="Quantum Kernel SVM",
+                family="quantum",
+                data=qsvm_metrics,
+            )
+        )
+
+    # ========================================================
+    # VARIATIONAL QUANTUM CLASSIFIER
+    # ========================================================
+
+    vqc = quantum.get(
+        "vqc",
+        {}
+    )
+
+    vqc_metrics = vqc.get(
+        "metrics",
+        {}
+    )
+
+    if vqc_metrics:
+        models.append(
+            normalize_model(
+                model_name="Variational Quantum Classifier",
+                family="quantum",
+                data=vqc_metrics,
+            )
+        )
+
+    # ========================================================
+    # DATASET INFORMATION
+    # ========================================================
+
+    dataset_info = training_result.get(
+        "dataset",
+        {}
+    )
+
+    if isinstance(dataset_info, dict):
+
+        dataset_name = (
+            dataset_info.get("name")
+            or dataset_info.get("dataset_name")
+            or "Uploaded Dataset"
+        )
+
+        target_column = dataset_info.get(
+            "target_column"
+        )
+
+        n_samples = dataset_info.get(
+            "rows"
+        )
+
+        n_features = dataset_info.get(
+            "columns"
+        )
+
+    else:
+        dataset_name = (
+            str(dataset_info)
+            if dataset_info
+            else "Uploaded Dataset"
+        )
+
+        target_column = training_result.get(
+            "target_column"
+        )
+
+        n_samples = None
+        n_features = None
+
+    # ========================================================
+    # FALLBACK DATASET INFORMATION
+    # ========================================================
+
+    if target_column is None:
+        target_column = training_result.get(
+            "target_column"
+        )
+
+    # ========================================================
+    # FINAL BENCHMARK
+    # ========================================================
+
+    benchmark = {
+        "dataset": dataset_name,
+        "target_column": target_column,
+        "models": models,
+    }
+
+    if n_samples is not None:
+        benchmark["samples"] = int(
+            n_samples
+        )
+
+    if n_features is not None:
+        benchmark["features"] = int(
+            n_features
+        )
+
+    return benchmark
 
 
 # ============================================================
@@ -309,7 +557,7 @@ def get_breast_cancer_benchmark():
 
 
 # ============================================================
-# ALL BENCHMARKS
+# ALL LEGACY BENCHMARKS
 # ============================================================
 
 def get_all_benchmarks():
