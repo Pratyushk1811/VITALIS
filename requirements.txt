@@ -50,3 +50,5 @@ uvicorn==0.52.4
 python-dotenv==1.1.1
 
 openai
+
+python-multipart==0.0.20
