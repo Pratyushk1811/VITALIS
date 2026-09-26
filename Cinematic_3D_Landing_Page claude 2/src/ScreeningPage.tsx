@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import './screening.css'
 
 const API =
@@ -207,6 +207,7 @@ function labelFor(field: string, value: number) {
 
 export default function ScreeningPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const resultsRef =
     useRef<HTMLElement | null>(null)
@@ -219,8 +220,13 @@ export default function ScreeningPage() {
 
   const messageIdRef = useRef(0)
 
+  const initialDisease: Disease =
+    searchParams.get('disease') === 'breast_cancer'
+      ? 'breast_cancer'
+      : 'heart'
+
   const [disease, setDisease] =
-    useState<Disease>('heart')
+    useState<Disease>(initialDisease)
 
   const [dataSource, setDataSource] =
     useState<DataSource>('manual')
@@ -716,6 +722,13 @@ export default function ScreeningPage() {
      CHAT
   ----------------------------- */
 
+  const clearChat = () => {
+    setChatMessages([])
+    setChatInput('')
+    setAssistantError('')
+    setAssistantLoading(false)
+  }
+
   const ask = async (
     question: string,
   ) => {
@@ -763,6 +776,12 @@ export default function ScreeningPage() {
             prediction_result:
               result,
             question: trimmed,
+            history: chatMessages.map(
+              ({ role, content }) => ({
+                role,
+                content,
+              }),
+            ),
           }),
         },
       )
@@ -1569,6 +1588,17 @@ export default function ScreeningPage() {
                       Screening context ready
                     </div>
                   </div>
+
+                  {chatMessages.length > 0 && (
+                    <button
+                      type="button"
+                      className="vitalis-chat-clear"
+                      onClick={clearChat}
+                      disabled={assistantLoading}
+                    >
+                      Clear chat
+                    </button>
+                  )}
                 </div>
 
                 <div

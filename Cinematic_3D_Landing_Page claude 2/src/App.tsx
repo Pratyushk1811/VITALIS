@@ -114,6 +114,7 @@ function Sec({
   imgSrc,
   imgPos = 'center',
   overlay,
+  id,
 }: {
   children: (v: boolean, ref: React.RefObject<HTMLElement>) => React.ReactNode;
   imgSrc?: string;
@@ -124,6 +125,7 @@ function Sec({
 
   return (
     <section
+      id={id}
       ref={ref as React.RefObject<HTMLElement>}
       style={{
         position: 'relative',
@@ -656,6 +658,7 @@ export default function App() {
               </p>
 
               <button
+                onClick={() => navigate('/screening?disease=heart')}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -737,6 +740,7 @@ export default function App() {
               </p>
 
               <button
+                onClick={() => navigate('/screening?disease=breast_cancer')}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -761,6 +765,7 @@ export default function App() {
 
       {/* ── 05 MORE CONDITIONS ───────────────────────────────────────────── */}
       <Sec
+        id="benchmarks"
         overlay="linear-gradient(180deg,rgba(8,11,14,1) 0%,rgba(8,11,14,0.97) 100%)"
       >
         {(v) => (
@@ -1234,6 +1239,7 @@ export default function App() {
 
       {/* ── 08 EXPLAINABILITY ────────────────────────────────────────────── */}
       <Sec
+        id="explainability"
         imgSrc={IMG.explain}
         imgPos="left center"
         overlay="linear-gradient(90deg,rgba(8,11,14,0.50) 0%,rgba(8,11,14,0.80) 48%,rgba(8,11,14,0.96) 100%)"
@@ -1288,6 +1294,9 @@ export default function App() {
                 <FeatureRows v={v} />
 
                 <button
+                  onClick={() => {
+                    document.getElementById('benchmarks')?.scrollIntoView({ behavior: 'smooth' })
+                  }}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -1395,6 +1404,7 @@ export default function App() {
               </div>
 
               <button
+                onClick={() => navigate('/research')}
                 style={{
                   background: 'transparent',
                   border: 'none',
