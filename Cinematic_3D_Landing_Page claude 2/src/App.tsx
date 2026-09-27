@@ -170,213 +170,131 @@ function Sec({
 
 // ── Benchmark figure ──────────────────────────────────────────────────────────
 function BenchFigure({ v }: { v: boolean }) {
-  const metrics = ['ACC', 'PREC', 'SENS', 'SPEC', 'F1', 'AUC'];
+  const models = [
+    ['LR', 0.8500, MINT],
+    ['RF', 0.8333, MINT],
+    ['RBF-SVM', 0.8667, MINT],
+    ['QSVM', 0.8333, VIOLET],
+    ['VQC', 0.7833, VIOLET],
+  ] as const;
 
-  const cls: [number, number, number, number, number][] = [
-    [0.965, 0.950, 0.978, 0.925, 0.992],
-    [0.958, 0.938, 0.972, 0.908, 0.986],
-    [0.922, 0.898, 0.944, 0.868, 0.962],
-    [0.983, 0.972, 0.993, 0.954, 1.00],
-    [0.940, 0.918, 0.957, 0.892, 0.972],
-    [0.991, 0.981, 0.998, 0.966, 1.00],
-  ];
-
-  const qnt: [number, number, number, number, number][] = [
-    [0.934, 0.910, 0.952, 0.878, 0.970],
-    [0.894, 0.868, 0.918, 0.836, 0.944],
-    [0.878, 0.848, 0.906, 0.816, 0.933],
-    [0.970, 0.952, 0.983, 0.929, 0.995],
-    [0.885, 0.858, 0.912, 0.828, 0.937],
-    [0.968, 0.949, 0.983, 0.924, 0.996],
-  ];
-
-  const W = 500;
-  const H = 240;
-  const PT = 16;
-  const PR = 20;
-  const PB = 40;
-  const PL = 36;
-
-  const bW = (W - PL - PR) / metrics.length;
-  const boxW = bW * 0.25;
-
-  const yLo = 0.80;
-  const yHi = 1.02;
-
-  const py = (val: number) =>
-    PT + (1 - (val - yLo) / (yHi - yLo)) * (H - PT - PB);
-
-  const cx = (i: number, side: 0 | 1) =>
-    PL + bW * i + bW * (side === 0 ? 0.25 : 0.54);
-
-  function Box({
-    d,
-    i,
-    side,
-    color,
-    delay,
-  }: {
-    d: [number, number, number, number, number];
-    i: number;
-    side: 0 | 1;
-    color: string;
-    delay: number;
-  }) {
-    const [med, q1, q3, wl, wh] = d;
-    const x = cx(i, side);
-    const bTop = py(q3);
-    const bBot = py(q1);
-    const bH = Math.max(2, bBot - bTop);
-
-    return (
-      <g>
-        <line
-          x1={x}
-          x2={x}
-          y1={py(wl)}
-          y2={py(wh)}
-          stroke={color}
-          strokeWidth={0.8}
-          opacity={0.30}
-        />
-
-        <rect
-          x={x - boxW / 2}
-          y={bTop}
-          width={boxW}
-          height={bH}
-          fill={color}
-          opacity={v ? 0.22 : 0}
-          style={{ transition: `opacity 0.7s ease ${delay}s` }}
-        />
-
-        <rect
-          x={x - boxW / 2}
-          y={bTop}
-          width={boxW}
-          height={bH}
-          fill="none"
-          stroke={color}
-          strokeWidth={0.7}
-          opacity={v ? 0.55 : 0}
-          style={{ transition: `opacity 0.7s ease ${delay}s` }}
-        />
-
-        <line
-          x1={x - boxW / 2}
-          x2={x + boxW / 2}
-          y1={py(med)}
-          y2={py(med)}
-          stroke={color}
-          strokeWidth={1.4}
-          opacity={v ? 0.85 : 0}
-          style={{ transition: `opacity 0.7s ease ${delay + 0.1}s` }}
-        />
-      </g>
-    );
-  }
+  const W = 560;
+  const H = 270;
+  const PL = 54;
+  const PR = 22;
+  const PT = 28;
+  const PB = 58;
+  const plotW = W - PL - PR;
+  const plotH = H - PT - PB;
+  const yMin = 0.78;
+  const yMax = 0.90;
+  const gap = 16;
+  const barW = (plotW - gap * (models.length - 1)) / models.length;
+  const y = (value: number) => PT + (1 - (value - yMin) / (yMax - yMin)) * plotH;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: W }}>
-      {[0.82, 0.86, 0.90, 0.94, 0.98].map((val) => (
-        <g key={val}>
-          <line
-            x1={PL}
-            x2={W - PR}
-            y1={py(val)}
-            y2={py(val)}
-            stroke="rgba(214,210,201,0.06)"
-            strokeWidth={0.5}
-          />
-          <text
-            x={PL - 5}
-            y={py(val) + 4}
-            textAnchor="end"
-            style={{
-              ...MONO,
-              fontSize: '7.5px',
-              fill: 'rgba(214,210,201,0.28)',
-            }}
-          >
-            {val.toFixed(2)}
-          </text>
-        </g>
-      ))}
+    <div style={{ width: '100%', maxWidth: W }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%' }} role="img" aria-label="Current cardiovascular experiment accuracy comparison">
+        {[0.80, 0.82, 0.84, 0.86, 0.88, 0.90].map((tick) => (
+          <g key={tick}>
+            <line
+              x1={PL}
+              x2={W - PR}
+              y1={y(tick)}
+              y2={y(tick)}
+              stroke="rgba(214,210,201,0.07)"
+              strokeWidth="0.7"
+            />
+            <text
+              x={PL - 8}
+              y={y(tick) + 4}
+              textAnchor="end"
+              style={{ ...MONO, fontSize: '8px', fill: 'rgba(214,210,201,0.30)' }}
+            >
+              {tick.toFixed(2)}
+            </text>
+          </g>
+        ))}
 
-      {metrics.map((m, i) => (
+        {models.map(([name, value, color], i) => {
+          const x = PL + i * (barW + gap);
+          const top = y(value);
+          return (
+            <g key={name}>
+              <rect
+                x={x}
+                y={v ? top : PT + plotH}
+                width={barW}
+                height={v ? PT + plotH - top : 0}
+                fill={color}
+                opacity={0.22}
+                style={{ transition: `all 0.9s cubic-bezier(0.22,1,0.36,1) ${0.18 + i * 0.08}s` }}
+              />
+              <rect
+                x={x}
+                y={v ? top : PT + plotH}
+                width={barW}
+                height={v ? PT + plotH - top : 0}
+                fill="none"
+                stroke={color}
+                strokeWidth="0.8"
+                opacity={0.60}
+                style={{ transition: `all 0.9s cubic-bezier(0.22,1,0.36,1) ${0.18 + i * 0.08}s` }}
+              />
+              <text
+                x={x + barW / 2}
+                y={v ? top - 9 : PT + plotH - 9}
+                textAnchor="middle"
+                style={{ ...MONO, fontSize: '8px', fill: color, opacity: 0.72 }}
+              >
+                {(value * 100).toFixed(1)}%
+              </text>
+              <text
+                x={x + barW / 2}
+                y={H - PB + 18}
+                textAnchor="middle"
+                style={{ ...MONO, fontSize: '8px', fill: 'rgba(214,210,201,0.40)', letterSpacing: '0.06em' }}
+              >
+                {name}
+              </text>
+            </g>
+          );
+        })}
+
         <text
-          key={m}
-          x={PL + bW * i + bW / 2}
-          y={H - PB + 16}
-          textAnchor="middle"
-          style={{
-            ...MONO,
-            fontSize: '8px',
-            fill: 'rgba(214,210,201,0.36)',
-            letterSpacing: '0.09em',
-          }}
+          x={PL}
+          y={15}
+          style={{ ...MONO, fontSize: '8px', fill: 'rgba(214,210,201,0.30)', letterSpacing: '0.12em' }}
         >
-          {m}
+          VALIDATED CARDIOVASCULAR BENCHMARK · ACCURACY
         </text>
-      ))}
+      </svg>
 
-      {metrics.map((_, i) => (
-        <g key={i}>
-          <Box d={cls[i]} i={i} side={0} color={MINT} delay={0.20 + i * 0.07} />
-          <Box d={qnt[i]} i={i} side={1} color={VIOLET} delay={0.28 + i * 0.07} />
-        </g>
-      ))}
-
-      {(
-        [
-          ['Classical', MINT],
-          ['Quantum', VIOLET],
-        ] as [string, string][]
-      ).map(([lbl, col], li) => (
-        <g key={lbl}>
-          <rect
-            x={W - PR - 74}
-            y={PT + li * 16}
-            width={9}
-            height={9}
-            fill={col}
-            opacity={0.25}
-          />
-          <rect
-            x={W - PR - 74}
-            y={PT + li * 16}
-            width={9}
-            height={9}
-            fill="none"
-            stroke={col}
-            strokeWidth={0.7}
-            opacity={0.60}
-          />
-          <text
-            x={W - PR - 60}
-            y={PT + li * 16 + 8}
-            style={{
-              ...MONO,
-              fontSize: '8px',
-              fill: 'rgba(214,210,201,0.45)',
-            }}
-          >
-            {lbl}
-          </text>
-        </g>
-      ))}
-    </svg>
+      <div style={{ display: 'flex', gap: '1.5rem', marginTop: 4 }}>
+        <span style={{ ...MONO, fontSize: '0.58rem', color: MINT, opacity: 0.48, letterSpacing: '0.10em' }}>
+          CLASSICAL · LR / RF / RBF-SVM
+        </span>
+        <span style={{ ...MONO, fontSize: '0.58rem', color: VIOLET, opacity: 0.48, letterSpacing: '0.10em' }}>
+          QUANTUM · QSVM / VQC
+        </span>
+      </div>
+      <div style={{ ...MONO, fontSize: '0.56rem', opacity: 0.22, letterSpacing: '0.08em', marginTop: 7 }}>
+        CARDIOVASCULAR · n = 61 · 80/20 STRATIFIED SPLIT · RANDOM STATE 42
+      </div>
+      <div style={{ ...MONO, fontSize: '0.56rem', opacity: 0.28, letterSpacing: '0.08em', marginTop: 7 }}>
+        BREAST CANCER · n = 114 · BEST ACCURACY: 97.37% · QSVM / RBF-SVM
+      </div>
+    </div>
   );
 }
 
 // ── Feature rows ──────────────────────────────────────────────────────────────
 function FeatureRows({ v }: { v: boolean }) {
   const rows = [
-    { f: 'Age', val: 0.21 },
-    { f: 'BMI', val: 0.18 },
-    { f: 'Glucose', val: 0.15 },
-    { f: 'Blood Pressure', val: 0.12 },
-    { f: 'Cholesterol', val: 0.10 },
+    { f: 'FEATURE INFLUENCE', val: 'LOCAL' },
+    { f: 'MODEL BEHAVIOUR', val: 'COMPARE' },
+    { f: 'SENSITIVITY', val: 'INSPECT' },
+    { f: 'PREDICTION', val: 'CONTEXT' },
   ];
 
   return (
@@ -390,7 +308,7 @@ function FeatureRows({ v }: { v: boolean }) {
           marginBottom: 10,
         }}
       >
-        TOP CONTRIBUTING FEATURES
+        INSPECTABLE OUTPUTS
       </div>
 
       {rows.map((r, ri) => (
@@ -399,8 +317,9 @@ function FeatureRows({ v }: { v: boolean }) {
           style={{
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'space-between',
             gap: 12,
-            padding: '8px 0',
+            padding: '9px 0',
             borderBottom: '1px solid rgba(214,210,201,0.06)',
             ...fadeUp(v, 0.35 + ri * 0.10),
           }}
@@ -408,33 +327,23 @@ function FeatureRows({ v }: { v: boolean }) {
           <span
             style={{
               ...MONO,
-              fontSize: '0.70rem',
-              opacity: 0.52,
-              minWidth: 108,
+              fontSize: '0.66rem',
+              opacity: 0.48,
+              letterSpacing: '0.08em',
             }}
           >
             {r.f}
           </span>
-
-          <div
-            style={{
-              height: 1,
-              background: MINT,
-              width: v ? `${r.val * 260}px` : '0px',
-              opacity: 0.55,
-              transition: `width 0.9s cubic-bezier(0.22,1,0.36,1) ${0.55 + ri * 0.10}s`,
-            }}
-          />
-
           <span
             style={{
               ...MONO,
-              fontSize: '0.66rem',
-              opacity: 0.36,
-              minWidth: 28,
+              fontSize: '0.60rem',
+              color: MINT,
+              opacity: 0.56,
+              letterSpacing: '0.12em',
             }}
           >
-            {r.val.toFixed(2)}
+            {r.val}
           </span>
         </div>
       ))}
@@ -599,7 +508,483 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 03 CARDIOVASCULAR ────────────────────────────────────────────── */}
+      {/* ── 03 HOW VITALIS WORKS ─────────────────────────────────────────── */}
+      <Sec
+        overlay="radial-gradient(circle at 76% 48%,rgba(107,184,172,0.08) 0%,rgba(8,11,14,0) 34%),radial-gradient(circle at 88% 64%,rgba(146,120,196,0.08) 0%,rgba(8,11,14,0) 30%),linear-gradient(180deg,rgba(8,11,14,0.96) 0%,rgba(8,11,14,0.99) 100%)"
+      >
+        {(v) => (
+          <>
+            {/* ── Abstract data field ─────────────────────────────────────── */}
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 900 720"
+              preserveAspectRatio="xMidYMid slice"
+              style={{
+                position: 'absolute',
+                right: '-4vw',
+                top: '50%',
+                width: '62vw',
+                minWidth: 680,
+                height: '92%',
+                transform: `translateY(-50%) ${v ? 'scale(1)' : 'scale(1.04)'}`,
+                opacity: v ? 0.92 : 0,
+                transition:
+                  'opacity 1.4s ease, transform 1.8s cubic-bezier(0.22,1,0.36,1)',
+                pointerEvents: 'none',
+              }}
+            >
+              <defs>
+                <radialGradient id="vitalisDataGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor={MINT} stopOpacity="0.16" />
+                  <stop offset="45%" stopColor={MINT} stopOpacity="0.035" />
+                  <stop offset="100%" stopColor={MINT} stopOpacity="0" />
+                </radialGradient>
+                <linearGradient id="vitalisFlow" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor={MINT} stopOpacity="0" />
+                  <stop offset="45%" stopColor={MINT} stopOpacity="0.35" />
+                  <stop offset="100%" stopColor={VIOLET} stopOpacity="0.22" />
+                </linearGradient>
+              </defs>
+
+              <ellipse cx="540" cy="360" rx="310" ry="270" fill="url(#vitalisDataGlow)" />
+
+              {/* faint data-field grid */}
+              {[120, 210, 300, 390, 480, 570, 660].map((y) => (
+                <line
+                  key={`gy-${y}`}
+                  x1="150"
+                  x2="860"
+                  y1={y}
+                  y2={y}
+                  stroke="rgba(214,210,201,0.045)"
+                  strokeWidth="1"
+                />
+              ))}
+              {[190, 280, 370, 460, 550, 640, 730, 820].map((x) => (
+                <line
+                  key={`gx-${x}`}
+                  x1={x}
+                  x2={x}
+                  y1="70"
+                  y2="650"
+                  stroke="rgba(214,210,201,0.035)"
+                  strokeWidth="1"
+                />
+              ))}
+
+              {/* flowing information paths */}
+              <path
+                d="M90 215 C245 150, 315 300, 450 270 S670 180, 860 255"
+                fill="none"
+                stroke="url(#vitalisFlow)"
+                strokeWidth="1.4"
+                opacity="0.7"
+              />
+              <path
+                d="M110 470 C240 390, 330 505, 455 445 S690 360, 860 455"
+                fill="none"
+                stroke="url(#vitalisFlow)"
+                strokeWidth="1"
+                opacity="0.55"
+              />
+              <path
+                d="M190 110 C310 250, 420 210, 510 345 S710 535, 835 585"
+                fill="none"
+                stroke="rgba(146,120,196,0.20)"
+                strokeWidth="1"
+                opacity="0.75"
+              />
+
+              {/* nodes: raw data → representation → model space */}
+              {[
+                [150, 215, 3.2, MINT],
+                [220, 184, 2.2, MINT],
+                [278, 260, 2.8, MINT],
+                [345, 222, 2.0, MINT],
+                [404, 288, 3.6, MINT],
+                [468, 265, 2.4, MINT],
+                [530, 330, 4.2, VIOLET],
+                [592, 292, 2.6, VIOLET],
+                [650, 350, 3.4, VIOLET],
+                [718, 320, 2.1, VIOLET],
+                [770, 390, 3.2, VIOLET],
+                [825, 350, 2.1, VIOLET],
+                [245, 455, 2.2, MINT],
+                [330, 490, 3.0, MINT],
+                [410, 435, 2.1, MINT],
+                [500, 470, 3.0, VIOLET],
+                [610, 425, 2.2, VIOLET],
+                [700, 475, 3.4, VIOLET],
+              ].map(([cx, cy, r, color], i) => (
+                <g key={`node-${i}`}>
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={Number(r) * 4}
+                    fill={String(color)}
+                    opacity="0.035"
+                  />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={r}
+                    fill="none"
+                    stroke={String(color)}
+                    strokeWidth="1"
+                    opacity="0.52"
+                  />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r="1.1"
+                    fill={String(color)}
+                    opacity="0.75"
+                  />
+                </g>
+              ))}
+
+              {/* central transformation field */}
+              <circle
+                cx="530"
+                cy="330"
+                r="82"
+                fill="none"
+                stroke="rgba(146,120,196,0.12)"
+                strokeWidth="1"
+                strokeDasharray="3 8"
+              />
+              <circle
+                cx="530"
+                cy="330"
+                r="122"
+                fill="none"
+                stroke="rgba(107,184,172,0.08)"
+                strokeWidth="1"
+                strokeDasharray="2 12"
+              />
+
+              <text
+                x="530"
+                y="326"
+                textAnchor="middle"
+                fill="rgba(214,210,201,0.38)"
+                style={{ ...MONO, fontSize: '11px', letterSpacing: '0.18em' }}
+              >
+                REPRESENTATION
+              </text>
+              <text
+                x="530"
+                y="345"
+                textAnchor="middle"
+                fill="rgba(214,210,201,0.18)"
+                style={{ ...MONO, fontSize: '8px', letterSpacing: '0.12em' }}
+              >
+                QUANTUM-READY SPACE
+              </text>
+
+              {/* model branch labels */}
+              <text
+                x="665"
+                y="165"
+                fill="rgba(107,184,172,0.48)"
+                style={{ ...MONO, fontSize: '9px', letterSpacing: '0.16em' }}
+              >
+                CLASSICAL
+              </text>
+              <text
+                x="665"
+                y="180"
+                fill="rgba(214,210,201,0.20)"
+                style={{ ...MONO, fontSize: '8px', letterSpacing: '0.10em' }}
+              >
+                LR · RF · SVM
+              </text>
+
+              <text
+                x="665"
+                y="555"
+                fill="rgba(146,120,196,0.52)"
+                style={{ ...MONO, fontSize: '9px', letterSpacing: '0.16em' }}
+              >
+                QUANTUM
+              </text>
+              <text
+                x="665"
+                y="570"
+                fill="rgba(214,210,201,0.20)"
+                style={{ ...MONO, fontSize: '8px', letterSpacing: '0.10em' }}
+              >
+                QSVM · VQC
+              </text>
+
+              <text
+                x="105"
+                y="590"
+                fill="rgba(214,210,201,0.18)"
+                style={{ ...MONO, fontSize: '8px', letterSpacing: '0.14em' }}
+              >
+                BIOMEDICAL SIGNAL
+              </text>
+            </svg>
+
+            {/* ── Content ──────────────────────────────────────────────────── */}
+            <div
+              style={{
+                position: 'relative',
+                zIndex: 2,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                padding: '8vh 5vw 7vh',
+              }}
+            >
+              <div style={{ maxWidth: 650 }}>
+                <div style={{ ...fadeUp(v, 0.10), marginBottom: '1.1rem' }}>
+                  <Label op={0.34}>THE VITALIS PIPELINE</Label>
+                </div>
+
+                <h2
+                  style={{
+                    ...SERIF,
+                    fontWeight: 400,
+                    fontSize: 'clamp(2.4rem,5.2vw,4.7rem)',
+                    lineHeight: 1.06,
+                    letterSpacing: '-0.020em',
+                    color: OFF_WHITE,
+                    margin: 0,
+                    ...fadeUp(v, 0.18),
+                  }}
+                >
+                  From biomedical data
+                  <br />
+                  to explainable prediction.
+                </h2>
+
+                <p
+                  style={{
+                    fontSize: 'clamp(0.88rem,1.4vw,1rem)',
+                    opacity: 0.42,
+                    lineHeight: 1.70,
+                    maxWidth: 510,
+                    marginTop: '1.3rem',
+                    ...fadeUp(v, 0.30),
+                  }}
+                >
+                  VITALIS prepares a common biomedical representation for
+                  classical and quantum-enhanced models, then evaluates their
+                  behaviour under the same framework.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  position: 'relative',
+                  zIndex: 3,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(5,minmax(0,1fr))',
+                  maxWidth: 1080,
+                  width: '100%',
+                  marginTop: '4vh',
+                  background: 'rgba(8,11,14,0.56)',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                  borderTop: '1px solid rgba(214,210,201,0.10)',
+                  borderBottom: '1px solid rgba(214,210,201,0.08)',
+                }}
+              >
+                {[
+                  {
+                    n: '01',
+                    title: 'DATA',
+                    lines: ['Biomedical', 'observations'],
+                    accent: MINT,
+                  },
+                  {
+                    n: '02',
+                    title: 'PREPROCESS',
+                    lines: ['Clean · encode', 'scale · impute'],
+                    accent: MINT,
+                  },
+                  {
+                    n: '03',
+                    title: 'SELECT + REDUCE',
+                    lines: ['Feature selection', 'PCA representation'],
+                    accent: MINT,
+                  },
+                  {
+                    n: '04',
+                    title: 'MODEL',
+                    lines: ['Classical + quantum', 'LR · RF · SVM · QSVM · VQC'],
+                    accent: VIOLET,
+                  },
+                  {
+                    n: '05',
+                    title: 'EVALUATE',
+                    lines: ['Benchmark', 'explain · compare'],
+                    accent: MINT,
+                  },
+                ].map((step, i) => (
+                  <div
+                    key={step.n}
+                    style={{
+                      position: 'relative',
+                      minHeight: 132,
+                      padding: '1.15rem 1rem',
+                      borderLeft: '1px solid rgba(214,210,201,0.07)',
+                      background:
+                        i === 3
+                          ? 'rgba(146,120,196,0.065)'
+                          : 'rgba(8,11,14,0.18)',
+                      ...fadeUp(v, 0.34 + i * 0.08),
+                    }}
+                  >
+                    <div
+                      style={{
+                        ...MONO,
+                        fontSize: '0.60rem',
+                        letterSpacing: '0.16em',
+                        color: step.accent,
+                        opacity: 0.72,
+                        marginBottom: '1rem',
+                      }}
+                    >
+                      {step.n}
+                    </div>
+
+                    <div
+                      style={{
+                        ...MONO,
+                        fontSize: '0.66rem',
+                        letterSpacing: '0.12em',
+                        color: OFF_WHITE,
+                        opacity: 0.62,
+                        marginBottom: '0.65rem',
+                      }}
+                    >
+                      {step.title}
+                    </div>
+
+                    <div
+                      style={{
+                        fontFamily: "'Inter',sans-serif",
+                        fontSize: '0.74rem',
+                        fontWeight: 300,
+                        color: OFF_WHITE,
+                        opacity: 0.40,
+                        lineHeight: 1.65,
+                      }}
+                    >
+                      {step.lines.map((line) => (
+                        <div key={line}>{line}</div>
+                      ))}
+                    </div>
+
+                    {i < 4 && (
+                      <div
+                        aria-hidden
+                        style={{
+                          position: 'absolute',
+                          right: -8,
+                          top: '50%',
+                          width: 16,
+                          height: 1,
+                          background:
+                            i === 2
+                              ? 'rgba(146,120,196,0.52)'
+                              : 'rgba(107,184,172,0.32)',
+                          zIndex: 4,
+                        }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  marginTop: '2.4vh',
+                  ...fadeUp(v, 0.78),
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '1.35rem',
+                    padding: '0.75rem 1.2rem',
+                    background: 'rgba(8,11,14,0.42)',
+                    backdropFilter: 'blur(6px)',
+                    borderTop: '1px solid rgba(214,210,201,0.07)',
+                    borderBottom: '1px solid rgba(214,210,201,0.07)',
+                  }}
+                >
+                  <span
+                    style={{
+                      ...MONO,
+                      fontSize: '0.60rem',
+                      letterSpacing: '0.15em',
+                      color: MINT,
+                      opacity: 0.72,
+                    }}
+                  >
+                    OUTPUT
+                  </span>
+                  {['Prediction', 'Consensus', 'Explainability'].map((item, i) => (
+                    <div
+                      key={item}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '1.35rem',
+                      }}
+                    >
+                      {i > 0 && (
+                        <span
+                          style={{
+                            width: 18,
+                            height: 1,
+                            background: 'rgba(214,210,201,0.18)',
+                          }}
+                        />
+                      )}
+                      <span
+                        style={{
+                          fontFamily: "'Inter',sans-serif",
+                          fontSize: '0.74rem',
+                          fontWeight: 300,
+                          color: OFF_WHITE,
+                          opacity: 0.44,
+                        }}
+                      >
+                        {item}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p
+                style={{
+                  ...MONO,
+                  textAlign: 'center',
+                  fontSize: '0.60rem',
+                  letterSpacing: '0.12em',
+                  opacity: 0.24,
+                  marginTop: '1.7vh',
+                  ...fadeIn(v, 0.94),
+                }}
+              >
+                QUANTUM MODELS ARE EVALUATED WITHIN A HYBRID CLASSICAL–QUANTUM PIPELINE
+              </p>
+            </div>
+          </>
+        )}
+      </Sec>
+
+      {/* ── 04 CARDIOVASCULAR ────────────────────────────────────────────── */}
       <Sec
         imgSrc={IMG.cardio}
         imgPos="center center"
@@ -681,7 +1066,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 04 BREAST CANCER ─────────────────────────────────────────────── */}
+      {/* ── 05 BREAST CANCER ─────────────────────────────────────────────── */}
       <Sec
         imgSrc={IMG.cancer}
         imgPos="center center"
@@ -763,9 +1148,171 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 05 MORE CONDITIONS ───────────────────────────────────────────── */}
+      {/* ── 06 YOUR DATASET ──────────────────────────────────────────────── */}
       <Sec
-        id="benchmarks"
+        overlay="radial-gradient(circle at 78% 42%,rgba(107,184,172,0.10) 0%,rgba(8,11,14,0) 32%),radial-gradient(circle at 88% 68%,rgba(146,120,196,0.09) 0%,rgba(8,11,14,0) 30%),linear-gradient(150deg,rgba(8,11,14,0.98) 0%,rgba(8,11,14,0.94) 100%)"
+      >
+        {(v) => (
+          <>
+            <div
+              style={{
+                position: 'absolute',
+                inset: '10vh 5vw 8vh',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
+              <div style={{ maxWidth: 760 }}>
+                <div style={{ ...fadeUp(v, 0.10), marginBottom: '1.1rem' }}>
+                  <Label op={0.34}>YOUR DATASET</Label>
+                </div>
+
+                <h2
+                  style={{
+                    ...SERIF,
+                    fontWeight: 400,
+                    fontSize: 'clamp(2.5rem,5.5vw,5rem)',
+                    lineHeight: 1.06,
+                    letterSpacing: '-0.020em',
+                    color: OFF_WHITE,
+                    margin: 0,
+                    ...fadeUp(v, 0.18),
+                  }}
+                >
+                  Bring your own
+                  <br />
+                  biomedical data.
+                </h2>
+
+                <p
+                  style={{
+                    fontSize: 'clamp(0.92rem,1.5vw,1.08rem)',
+                    opacity: 0.42,
+                    lineHeight: 1.72,
+                    maxWidth: 520,
+                    marginTop: '1.4rem',
+                    ...fadeUp(v, 0.30),
+                  }}
+                >
+                  Upload a labeled CSV and use the same VITALIS workflow to
+                  profile, prepare, train, benchmark, predict, and inspect your
+                  dataset.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(6,minmax(0,1fr))',
+                  maxWidth: 1050,
+                  width: '100%',
+                  marginTop: '5vh',
+                  borderTop: '1px solid rgba(214,210,201,0.09)',
+                  borderBottom: '1px solid rgba(214,210,201,0.07)',
+                  background: 'rgba(8,11,14,0.42)',
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                }}
+              >
+                {[
+                  ['01', 'UPLOAD', 'CSV'],
+                  ['02', 'PROFILE', 'DATA'],
+                  ['03', 'PREPARE', 'FEATURES'],
+                  ['04', 'TRAIN', 'HYBRID'],
+                  ['05', 'BENCHMARK', 'MODELS'],
+                  ['06', 'PREDICT', 'EXPLAIN'],
+                ].map(([n, title, sub], i) => (
+                  <div
+                    key={n}
+                    style={{
+                      minHeight: 112,
+                      padding: '1rem 0.85rem',
+                      borderLeft: '1px solid rgba(214,210,201,0.07)',
+                      ...fadeUp(v, 0.38 + i * 0.07),
+                    }}
+                  >
+                    <div
+                      style={{
+                        ...MONO,
+                        fontSize: '0.58rem',
+                        letterSpacing: '0.16em',
+                        color: i === 3 ? VIOLET : MINT,
+                        opacity: 0.72,
+                        marginBottom: '0.85rem',
+                      }}
+                    >
+                      {n}
+                    </div>
+                    <div
+                      style={{
+                        ...MONO,
+                        fontSize: '0.64rem',
+                        letterSpacing: '0.12em',
+                        color: OFF_WHITE,
+                        opacity: 0.62,
+                        marginBottom: 7,
+                      }}
+                    >
+                      {title}
+                    </div>
+                    <div
+                      style={{
+                        ...MONO,
+                        fontSize: '0.58rem',
+                        letterSpacing: '0.10em',
+                        opacity: 0.28,
+                      }}
+                    >
+                      {sub}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1.8rem',
+                  marginTop: '2.8vh',
+                  ...fadeUp(v, 0.84),
+                }}
+              >
+                <button
+                  onClick={() => navigate('/screening')}
+                  style={{
+                    background: 'transparent',
+                    border: `1px solid ${MINT}`,
+                    color: MINT,
+                    padding: '14px 32px',
+                    ...MONO,
+                    fontSize: '0.74rem',
+                    letterSpacing: '0.15em',
+                    cursor: 'pointer',
+                  }}
+                >
+                  OPEN DATASET WORKSPACE →
+                </button>
+
+                <span
+                  style={{
+                    ...MONO,
+                    fontSize: '0.62rem',
+                    letterSpacing: '0.12em',
+                    opacity: 0.24,
+                  }}
+                >
+                  LABELED BIOMEDICAL CSV
+                </span>
+              </div>
+            </div>
+          </>
+        )}
+      </Sec>
+
+      {/* ── 06 MORE CONDITIONS ───────────────────────────────────────────── */}
+      <Sec
         overlay="linear-gradient(180deg,rgba(8,11,14,1) 0%,rgba(8,11,14,0.97) 100%)"
       >
         {(v) => (
@@ -928,7 +1475,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 06 COMPUTATION ──────────────────────────────────────────────── */}
+      {/* ── 07 COMPUTATION ──────────────────────────────────────────────── */}
       <Sec
         imgSrc={IMG.compute}
         imgPos="right center"
@@ -1090,7 +1637,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 06 CONVERGENCE ───────────────────────────────────────────────── */}
+      {/* ── 08 CONVERGENCE ───────────────────────────────────────────────── */}
       <Sec
         imgSrc={IMG.converge}
         imgPos="center center"
@@ -1162,8 +1709,9 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 07 BENCHMARK ─────────────────────────────────────────────────── */}
+      {/* ── 09 BENCHMARK ─────────────────────────────────────────────────── */}
       <Sec
+        id="benchmarks"
         overlay="linear-gradient(180deg,rgba(8,11,14,1) 0%,rgba(8,11,14,0.97) 100%)"
       >
         {(v) => (
@@ -1214,11 +1762,17 @@ export default function App() {
                 </p>
 
                 <button
+                  onClick={() =>
+                    document.getElementById('benchmarks')?.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'start',
+                    })
+                  }
                   style={{
                     background: 'transparent',
                     border: 'none',
                     color: OFF_WHITE,
-                    opacity: 0.28,
+                    opacity: 0.42,
                     ...MONO,
                     fontSize: '0.68rem',
                     letterSpacing: '0.14em',
@@ -1237,7 +1791,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 08 EXPLAINABILITY ────────────────────────────────────────────── */}
+      {/* ── 10 EXPLAINABILITY ────────────────────────────────────────────── */}
       <Sec
         id="explainability"
         imgSrc={IMG.explain}
@@ -1295,7 +1849,7 @@ export default function App() {
 
                 <button
                   onClick={() => {
-                    document.getElementById('benchmarks')?.scrollIntoView({ behavior: 'smooth' })
+                    document.getElementById('benchmarks')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                   }}
                   style={{
                     background: 'transparent',
@@ -1321,7 +1875,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 09 RESEARCH ──────────────────────────────────────────────────── */}
+      {/* ── 11 RESEARCH ──────────────────────────────────────────────────── */}
       <Sec overlay="rgba(8,11,14,1)">
         {(v) => (
           <>
@@ -1367,7 +1921,7 @@ export default function App() {
                   ['Dataset', 'Cardiovascular · Breast Cancer'],
                   ['Feature Engineering', 'Clinical · Engineered Features'],
                   ['Model Architecture', 'Classical ML · Quantum ML'],
-                  ['Evaluation', 'Cross-validation · Multiple Metrics'],
+                  ['Evaluation', 'Stratified holdout · Multiple Metrics'],
                   ['Reproducibility', 'Code · Data · Methodology'],
                 ].map(([k, val]) => (
                   <div
@@ -1428,7 +1982,7 @@ export default function App() {
         )}
       </Sec>
 
-      {/* ── 10 FUTURE ────────────────────────────────────────────────────── */}
+      {/* ── 12 FUTURE ────────────────────────────────────────────────────── */}
       <Sec
         imgSrc={IMG.future}
         imgPos="center center"

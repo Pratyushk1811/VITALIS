@@ -1,38 +1,33 @@
 """
-Generic Variational Quantum Classifier (VQC)
+VITALIS - Variational Quantum Classifier (VQC)
+
+Supports:
+    - Binary classification
+    - Multiclass classification
 
 Pipeline:
 
     Classical features
-        ↓
+            ↓
     Quantum dimensionality reduction
-        ↓
+            ↓
     Angle encoding
-        ↓
+            ↓
     Variational quantum circuit
-        ↓
-    Pauli-Z expectation
-        ↓
-    Probability of class 1
-        ↓
-    Binary classification metrics
+            ↓
+    Pauli-Z expectation values
+            ↓
+    Class logits
+            ↓
+    Differentiable softmax
+            ↓
+    Prediction
 
-The VQC currently supports binary classification.
+The integrated VITALIS pipeline supplies the shared
+train/test split.
 
-Important:
-For a Pauli-Z measurement:
-
-    <Z> = P(0) - P(1)
-
-Therefore:
-
-    P(1) = (1 - <Z>) / 2
-
-The integrated VITALIS pipeline supplies one shared
-train/test split to this model.
-
-For backward compatibility, train_vqc() can still create
-its own split when X_test/y_test are not supplied.
+The model does NOT create another split when
+X_test/y_test are explicitly supplied.
 """
 
 import time
@@ -67,6 +62,42 @@ DEFAULT_N_LAYERS = 2
 
 
 # ============================================================
+# DIFFERENTIABLE SOFTMAX
+# ============================================================
+
+def differentiable_softmax(logits):
+    """
+    Numerically stable softmax implemented only with
+    basic PennyLane math operations.
+
+    This intentionally avoids qml.math.softmax because
+    the installed PennyLane/Autoray stack is failing to
+    resolve softmax for the Autograd backend.
+
+    The operations below remain differentiable with
+    respect to the VQC weights.
+    """
+
+    shifted = (
+        logits
+        - qml.math.max(logits)
+    )
+
+    exponentials = qml.math.exp(
+        shifted
+    )
+
+    denominator = qml.math.sum(
+        exponentials
+    )
+
+    return (
+        exponentials
+        / denominator
+    )
+
+
+# ============================================================
 # VQC MODEL
 # ============================================================
 
@@ -82,26 +113,61 @@ class VQCModel:
         RZ
         CNOT chain
 
-    The circuit measures Pauli-Z on the first qubit.
+    For binary classification:
+        two measured expectation values are used as logits.
+
+    For multiclass classification:
+        one measured expectation value is used per class.
     """
 
     def __init__(
         self,
         n_qubits,
+        n_classes=2,
         n_layers=DEFAULT_N_LAYERS,
         learning_rate=DEFAULT_LEARNING_RATE,
         random_state=DEFAULT_RANDOM_STATE,
     ):
-
         self.n_qubits = int(n_qubits)
+        self.n_classes = int(n_classes)
         self.n_layers = int(n_layers)
-        self.learning_rate = float(learning_rate)
-        self.random_state = int(random_state)
+        self.learning_rate = float(
+            learning_rate
+        )
+        self.random_state = int(
+            random_state
+        )
+
+        if self.n_qubits < 1:
+            raise ValueError(
+                "At least one qubit is required."
+            )
+
+        if self.n_classes < 2:
+            raise ValueError(
+                "At least two classes are required."
+            )
+
+        if self.n_classes > self.n_qubits:
+            raise ValueError(
+                f"VQC requires at least one measured "
+                f"qubit per class. Received "
+                f"{self.n_classes} classes but only "
+                f"{self.n_qubits} qubits."
+            )
+
+        # ----------------------------------------------------
+        # Quantum device
+        # ----------------------------------------------------
 
         self.dev = qml.device(
             "default.qubit",
             wires=self.n_qubits,
         )
+
+        # ----------------------------------------------------
+        # Deterministic initialization
+        # ----------------------------------------------------
 
         rng = np.random.default_rng(
             self.random_state
@@ -122,6 +188,10 @@ class VQCModel:
             requires_grad=True,
         )
 
+        # ----------------------------------------------------
+        # QNode
+        # ----------------------------------------------------
+
         self.qnode = qml.QNode(
             self._circuit,
             self.dev,
@@ -129,16 +199,15 @@ class VQCModel:
             diff_method="backprop",
         )
 
-    # --------------------------------------------------------
-    # Quantum circuit
-    # --------------------------------------------------------
+    # ========================================================
+    # QUANTUM CIRCUIT
+    # ========================================================
 
     def _circuit(
         self,
         features,
         weights,
     ):
-
         # ----------------------------------------------------
         # Feature encoding
         # ----------------------------------------------------
@@ -146,7 +215,6 @@ class VQCModel:
         for qubit in range(
             self.n_qubits
         ):
-
             qml.RY(
                 features[qubit],
                 wires=qubit,
@@ -182,11 +250,13 @@ class VQCModel:
                     wires=qubit,
                 )
 
+            # ------------------------------------------------
             # CNOT entanglement chain
+            # ------------------------------------------------
+
             for qubit in range(
                 self.n_qubits - 1
             ):
-
                 qml.CNOT(
                     wires=[
                         qubit,
@@ -195,88 +265,72 @@ class VQCModel:
                 )
 
         # ----------------------------------------------------
-        # Measurement
+        # Measurements
+        #
+        # One Pauli-Z expectation per class.
         # ----------------------------------------------------
 
-        return qml.expval(
-            qml.PauliZ(0)
+        return tuple(
+            qml.expval(
+                qml.PauliZ(
+                    qubit
+                )
+            )
+            for qubit in range(
+                self.n_classes
+            )
         )
 
-    # --------------------------------------------------------
-    # Raw expectation
-    # --------------------------------------------------------
+    # ========================================================
+    # LOGITS
+    # ========================================================
 
-    def expectation(
+    def logits(
         self,
         features,
         weights=None,
     ):
-
         if weights is None:
             weights = self.weights
 
-        return self.qnode(
+        values = self.qnode(
             features,
             weights,
         )
 
-    # --------------------------------------------------------
-    # Probability of class 1
-    # --------------------------------------------------------
-
-    def probability_class_1(
-        self,
-        features,
-        weights=None,
-    ):
-        """
-        Convert Pauli-Z expectation into P(class=1).
-
-        <Z> = P(0) - P(1)
-
-        Since:
-
-            P(0) + P(1) = 1
-
-        we get:
-
-            P(1) = (1 - <Z>) / 2
-        """
-
-        expectation = self.expectation(
-            features,
-            weights,
+        return qml.math.stack(
+            values
         )
 
-        probability = (
-            1.0 - expectation
-        ) / 2.0
-
-        return probability
-
-    # --------------------------------------------------------
-    # Batch probability prediction
-    # --------------------------------------------------------
+    # ========================================================
+    # PROBABILITY PREDICTION
+    # ========================================================
 
     def predict_proba(
         self,
         X,
         weights=None,
     ):
+        if weights is None:
+            weights = self.weights
 
         probabilities = []
 
         for row in X:
 
-            probability = (
-                self.probability_class_1(
-                    row,
-                    weights,
-                )
+            logits = self.logits(
+                row,
+                weights,
+            )
+
+            # IMPORTANT:
+            # Do NOT use qml.math.softmax().
+            probs = differentiable_softmax(
+                logits
             )
 
             probabilities.append(
-                probability
+                probs
             )
 
         return np.asarray(
@@ -284,17 +338,15 @@ class VQCModel:
             dtype=float,
         )
 
-    # --------------------------------------------------------
-    # Class prediction
-    # --------------------------------------------------------
+    # ========================================================
+    # CLASS PREDICTION
+    # ========================================================
 
     def predict(
         self,
         X,
         weights=None,
-        threshold=0.5,
     ):
-
         probabilities = (
             self.predict_proba(
                 X,
@@ -302,27 +354,32 @@ class VQCModel:
             )
         )
 
-        return (
-            probabilities >= threshold
+        return np.argmax(
+            probabilities,
+            axis=1,
         ).astype(int)
 
 
 # ============================================================
-# BINARY CROSS ENTROPY
+# MULTICLASS CROSS ENTROPY
 # ============================================================
 
-def binary_cross_entropy(
+def multiclass_cross_entropy(
     model,
     X,
     y,
     weights,
 ):
     """
-    Binary cross entropy.
+    Multiclass cross-entropy.
 
-    Only the quantum weights are differentiable.
+    The quantum circuit produces class logits.
 
-    Labels are ordinary Python/NumPy scalar values.
+    A manually implemented differentiable softmax converts
+    them to probabilities.
+
+    This avoids the broken qml.math.softmax -> Autoray ->
+    Autograd path in the current environment.
     """
 
     losses = []
@@ -332,48 +389,48 @@ def binary_cross_entropy(
         y,
     ):
 
-        # Quantum output.
-        expectation = model.expectation(
+        logits = model.logits(
             features,
             weights,
         )
 
-        # Convert Pauli-Z expectation
-        # to probability of class 1.
-        probability = (
-            1.0 - expectation
-        ) / 2.0
+        # ----------------------------------------------------
+        # Differentiable softmax
+        # ----------------------------------------------------
 
-        # Numerical stability.
-        probability = qml.math.clip(
-            probability,
+        probabilities = (
+            differentiable_softmax(
+                logits
+            )
+        )
+
+        # ----------------------------------------------------
+        # Numerical protection
+        # ----------------------------------------------------
+
+        probabilities = qml.math.clip(
+            probabilities,
             1e-7,
             1.0 - 1e-7,
         )
 
-        # Label is a constant.
-        #
-        # It must NOT be a differentiable
-        # PennyLane parameter.
-        label = float(label)
+        # IMPORTANT:
+        # label is ordinary NumPy/Python data.
+        # It is NOT a differentiable parameter.
+        label = int(label)
 
-        loss = (
-            -label
-            * qml.math.log(
-                probability
-            )
-            - (
-                1.0 - label
-            )
-            * qml.math.log(
-                1.0 - probability
-            )
+        loss = -qml.math.log(
+            probabilities[label]
         )
 
-        losses.append(loss)
+        losses.append(
+            loss
+        )
 
     return qml.math.mean(
-        qml.math.stack(losses)
+        qml.math.stack(
+            losses
+        )
     )
 
 
@@ -384,10 +441,16 @@ def binary_cross_entropy(
 def calculate_metrics(
     y_true,
     probabilities,
-    threshold=0.5,
 ):
     """
-    Calculate binary classification metrics.
+    Calculate binary or multiclass metrics.
+
+    Multiclass:
+        precision      = macro
+        sensitivity    = macro recall
+        specificity    = macro one-vs-rest
+        F1             = macro
+        ROC-AUC        = OVR macro
     """
 
     y_true = np.asarray(
@@ -400,9 +463,22 @@ def calculate_metrics(
         dtype=float,
     )
 
-    predictions = (
-        probabilities >= threshold
+    if probabilities.ndim == 1:
+        probabilities = np.column_stack(
+            [
+                1.0 - probabilities,
+                probabilities,
+            ]
+        )
+
+    predictions = np.argmax(
+        probabilities,
+        axis=1,
     ).astype(int)
+
+    num_classes = int(
+        probabilities.shape[1]
+    )
 
     # --------------------------------------------------------
     # Accuracy
@@ -420,6 +496,7 @@ def calculate_metrics(
     precision = precision_score(
         y_true,
         predictions,
+        average="macro",
         zero_division=0,
     )
 
@@ -430,6 +507,7 @@ def calculate_metrics(
     sensitivity = recall_score(
         y_true,
         predictions,
+        average="macro",
         zero_division=0,
     )
 
@@ -440,52 +518,104 @@ def calculate_metrics(
     f1 = f1_score(
         y_true,
         predictions,
+        average="macro",
         zero_division=0,
     )
-
-    # --------------------------------------------------------
-    # Confusion matrix
-    #
-    # [[TN, FP],
-    #  [FN, TP]]
-    # --------------------------------------------------------
-
-    cm = confusion_matrix(
-        y_true,
-        predictions,
-        labels=[0, 1],
-    )
-
-    tn, fp, fn, tp = cm.ravel()
 
     # --------------------------------------------------------
     # Specificity
     # --------------------------------------------------------
 
-    if (tn + fp) > 0:
+    cm = confusion_matrix(
+        y_true,
+        predictions,
+        labels=list(
+            range(num_classes)
+        ),
+    )
 
-        specificity = (
-            tn / (tn + fp)
+    specificities = []
+
+    for class_index in range(
+        num_classes
+    ):
+
+        tp = cm[
+            class_index,
+            class_index,
+        ]
+
+        fn = (
+            cm[class_index, :].sum()
+            - tp
         )
 
-    else:
+        fp = (
+            cm[:, class_index].sum()
+            - tp
+        )
 
-        specificity = 0.0
+        tn = (
+            cm.sum()
+            - tp
+            - fn
+            - fp
+        )
+
+        denominator = (
+            tn + fp
+        )
+
+        if denominator > 0:
+            class_specificity = (
+                tn / denominator
+            )
+        else:
+            class_specificity = 0.0
+
+        specificities.append(
+            float(
+                class_specificity
+            )
+        )
+
+    specificity = float(
+        np.mean(
+            specificities
+        )
+    )
 
     # --------------------------------------------------------
     # ROC-AUC
     # --------------------------------------------------------
 
+    roc_auc = None
+
     try:
 
-        roc_auc = roc_auc_score(
-            y_true,
-            probabilities,
-        )
+        if num_classes == 2:
+
+            roc_auc = roc_auc_score(
+                y_true,
+                probabilities[:, 1],
+            )
+
+        else:
+
+            roc_auc = roc_auc_score(
+                y_true,
+                probabilities,
+                multi_class="ovr",
+                average="macro",
+            )
 
     except ValueError:
 
         roc_auc = None
+
+    # --------------------------------------------------------
+    # Return plain Python values
+    # --------------------------------------------------------
 
     return {
         "accuracy": float(
@@ -526,32 +656,37 @@ def validate_inputs(
 ):
     """
     Validate VQC input data.
+
+    Labels must be:
+
+        Binary:
+            0, 1
+
+        Multiclass:
+            0, 1, 2, ...
     """
 
     if not isinstance(
         X,
         pd.DataFrame,
     ):
-
         raise TypeError(
             "X must be a pandas DataFrame."
         )
 
     if len(X) == 0:
-
         raise ValueError(
             "X is empty."
         )
 
     if len(X) != len(y):
-
         raise ValueError(
             "X and y must have the same "
             "number of samples."
         )
 
     # --------------------------------------------------------
-    # Numeric feature validation
+    # Feature validation
     # --------------------------------------------------------
 
     for column in X.columns:
@@ -559,7 +694,6 @@ def validate_inputs(
         if not pd.api.types.is_numeric_dtype(
             X[column]
         ):
-
             raise ValueError(
                 "Quantum features must be numeric. "
                 f"Column '{column}' is not numeric."
@@ -569,26 +703,34 @@ def validate_inputs(
     # Target validation
     # --------------------------------------------------------
 
-    y_array = np.asarray(y)
+    y_array = np.asarray(
+        y,
+        dtype=int,
+    )
 
     unique_classes = np.unique(
         y_array
     )
 
-    if len(unique_classes) != 2:
-
+    if len(unique_classes) < 2:
         raise ValueError(
-            "VQC currently supports "
-            "binary classification only."
+            "VQC requires at least two target classes."
         )
 
-    if not set(
-        unique_classes
-    ).issubset({0, 1}):
+    expected_classes = np.arange(
+        len(unique_classes),
+        dtype=int,
+    )
 
+    if not np.array_equal(
+        unique_classes,
+        expected_classes,
+    ):
         raise ValueError(
-            "Target labels must be encoded "
-            "as 0 and 1."
+            "Target labels must be integer encoded "
+            "consecutively starting from 0. "
+            f"Received classes: "
+            f"{unique_classes.tolist()}"
         )
 
 
@@ -610,54 +752,14 @@ def train_vqc(
     """
     Train a Variational Quantum Classifier.
 
-    Parameters
-    ----------
-    X_train : pandas.DataFrame
-        Training quantum-ready features.
+    If X_test and y_test are supplied, they are used directly.
 
-    y_train : array-like
-        Training binary labels encoded as 0 and 1.
-
-    X_test : pandas.DataFrame, optional
-        Held-out test quantum-ready features.
-
-        If omitted, a standalone train/test split is created
-        for backward compatibility.
-
-    y_test : array-like, optional
-        Held-out test labels.
-
-    test_size : float
-        Fraction reserved for testing when an automatic
-        standalone split is required.
-
-    random_state : int
-        Random seed.
-
-    learning_rate : float
-        Adam optimizer learning rate.
-
-    epochs : int
-        Number of optimization epochs.
-
-    n_layers : int
-        Number of variational layers.
-
-    Returns
-    -------
-    dict
-        VQC model, metrics, scaler and training artifacts.
-
-    Important
-    ---------
-    In the integrated VITALIS pipeline, X_train/y_train and
-    X_test/y_test are supplied by train_pipeline.py.
-
-    Therefore this model does NOT create another split.
+    This preserves the shared train/test split created by
+    train_pipeline.py.
     """
 
     # --------------------------------------------------------
-    # Validate training input
+    # Initial validation
     # --------------------------------------------------------
 
     validate_inputs(
@@ -666,8 +768,7 @@ def train_vqc(
     )
 
     # --------------------------------------------------------
-    # Determine whether this is an integrated run
-    # or standalone backward-compatible run.
+    # Integrated vs standalone mode
     # --------------------------------------------------------
 
     if (
@@ -707,8 +808,8 @@ def train_vqc(
     ):
 
         raise ValueError(
-            "X_test and y_test must either both be supplied "
-            "or both be omitted."
+            "X_test and y_test must either both be "
+            "supplied or both be omitted."
         )
 
     else:
@@ -742,26 +843,25 @@ def train_vqc(
     )
 
     # --------------------------------------------------------
-    # Validate train/test feature compatibility
+    # Feature compatibility
     # --------------------------------------------------------
 
-    if list(X_train.columns) != list(
+    if list(
+        X_train.columns
+    ) != list(
         X_test.columns
     ):
-
         raise ValueError(
             "X_train and X_test must contain "
             "the same features in the same order."
         )
 
     if len(X_train) == 0:
-
         raise ValueError(
             "X_train is empty."
         )
 
     if len(X_test) == 0:
-
         raise ValueError(
             "X_test is empty."
         )
@@ -770,55 +870,115 @@ def train_vqc(
         X_train.columns.tolist()
     )
 
-    n_qubits = X_train.shape[1]
+    n_qubits = int(
+        X_train.shape[1]
+    )
 
     if n_qubits < 1:
-
         raise ValueError(
             "At least one quantum feature "
             "is required."
         )
 
     # --------------------------------------------------------
-    # Print configuration
+    # Determine classes
+    # --------------------------------------------------------
+
+    all_classes = np.unique(
+        np.concatenate(
+            [
+                y_train,
+                y_test,
+            ]
+        )
+    )
+
+    all_classes = np.asarray(
+        all_classes,
+        dtype=int,
+    )
+
+    n_classes = int(
+        len(all_classes)
+    )
+
+    expected_classes = np.arange(
+        n_classes,
+        dtype=int,
+    )
+
+    if not np.array_equal(
+        all_classes,
+        expected_classes,
+    ):
+        raise ValueError(
+            "VQC labels must be encoded consecutively "
+            "starting from 0. "
+            f"Received classes: "
+            f"{all_classes.tolist()}"
+        )
+
+    classification_type = (
+        "binary"
+        if n_classes == 2
+        else "multiclass"
+    )
+
+    if n_classes > n_qubits:
+        raise ValueError(
+            f"VQC requires at least {n_classes} "
+            f"qubits for {n_classes} classes. "
+            f"Only {n_qubits} quantum features "
+            f"were supplied."
+        )
+
+    # --------------------------------------------------------
+    # Configuration
     # --------------------------------------------------------
 
     print()
-    print("=" * 50)
+    print("=" * 60)
     print(
         "TRAINING VARIATIONAL QUANTUM CLASSIFIER"
     )
-    print("=" * 50)
+    print("=" * 60)
 
     print(
-        f"Qubits:        {n_qubits}"
+        f"Qubits:           {n_qubits}"
     )
 
     print(
-        f"Layers:        {n_layers}"
+        f"Classes:          {n_classes}"
     )
 
     print(
-        f"Training data: {len(X_train)}"
+        f"Classification:   {classification_type}"
     )
 
     print(
-        f"Test data:     {len(X_test)}"
+        f"Layers:           {n_layers}"
     )
 
     print(
-        f"Epochs:        {epochs}"
+        f"Training data:    {len(X_train)}"
     )
 
     print(
-        f"Learning rate: {learning_rate}"
+        f"Test data:        {len(X_test)}"
+    )
+
+    print(
+        f"Epochs:           {epochs}"
+    )
+
+    print(
+        f"Learning rate:    {learning_rate}"
     )
 
     # --------------------------------------------------------
-    # Scale features to [0, pi]
+    # Scale features
     #
-    # IMPORTANT:
-    # The scaler is fitted ONLY on training data.
+    # Fit ONLY on training data.
     # --------------------------------------------------------
 
     scaler = MinMaxScaler(
@@ -841,11 +1001,7 @@ def train_vqc(
     )
 
     # --------------------------------------------------------
-    # Convert training features to
-    # PennyLane-compatible arrays.
-    #
-    # requires_grad=False is correct because
-    # features are not trainable parameters.
+    # PennyLane training data
     # --------------------------------------------------------
 
     X_train_q = qml.numpy.array(
@@ -853,21 +1009,13 @@ def train_vqc(
         requires_grad=False,
     )
 
-    # IMPORTANT:
-    #
-    # y_train is deliberately NOT converted
-    # into a PennyLane tensor.
-    #
-    # Labels are constants and do not need
-    # gradients.
     # --------------------------------------------------------
-
-    # --------------------------------------------------------
-    # Create VQC model
+    # Model
     # --------------------------------------------------------
 
     model = VQCModel(
         n_qubits=n_qubits,
+        n_classes=n_classes,
         n_layers=n_layers,
         learning_rate=learning_rate,
         random_state=random_state,
@@ -889,17 +1037,24 @@ def train_vqc(
     # Training
     # --------------------------------------------------------
 
-    training_start = time.perf_counter()
+    print()
+    print(
+        "Starting VQC optimization..."
+    )
+
+    training_start = (
+        time.perf_counter()
+    )
 
     for epoch in range(
-        epochs
+        int(epochs)
     ):
 
         def objective(
             current_weights
         ):
 
-            return binary_cross_entropy(
+            return multiclass_cross_entropy(
                 model,
                 X_train_q,
                 y_train,
@@ -915,7 +1070,9 @@ def train_vqc(
         )
 
         loss_value = float(
-            loss
+            np.asarray(
+                loss
+            )
         )
 
         loss_history.append(
@@ -942,11 +1099,19 @@ def train_vqc(
     # Evaluation
     # --------------------------------------------------------
 
+    print()
+    print(
+        "Evaluating VQC..."
+    )
+
     evaluation_start = (
         time.perf_counter()
     )
 
-    # Test probabilities.
+    # --------------------------------------------------------
+    # Test
+    # --------------------------------------------------------
+
     test_probabilities = (
         model.predict_proba(
             X_test_scaled,
@@ -954,19 +1119,23 @@ def train_vqc(
         )
     )
 
-    # Test predictions.
-    test_predictions = (
-        test_probabilities >= 0.5
+    test_probabilities = np.asarray(
+        test_probabilities,
+        dtype=float,
+    )
+
+    test_predictions = np.argmax(
+        test_probabilities,
+        axis=1,
     ).astype(int)
 
-    # Test metrics.
     test_metrics = calculate_metrics(
         y_test,
         test_probabilities,
     )
 
     # --------------------------------------------------------
-    # Training-set probabilities
+    # Training set
     # --------------------------------------------------------
 
     train_probabilities = (
@@ -976,8 +1145,14 @@ def train_vqc(
         )
     )
 
-    train_predictions = (
-        train_probabilities >= 0.5
+    train_probabilities = np.asarray(
+        train_probabilities,
+        dtype=float,
+    )
+
+    train_predictions = np.argmax(
+        train_probabilities,
+        axis=1,
     ).astype(int)
 
     train_metrics = calculate_metrics(
@@ -995,32 +1170,42 @@ def train_vqc(
     # --------------------------------------------------------
 
     print()
-    print("=" * 50)
-    print("VQC RESULTS")
-    print("=" * 50)
+    print("=" * 60)
+    print(
+        "VQC RESULTS"
+    )
+    print("=" * 60)
 
     print(
-        f"Accuracy:     "
+        f"Classification:   {classification_type}"
+    )
+
+    print(
+        f"Classes:          {n_classes}"
+    )
+
+    print(
+        f"Accuracy:         "
         f"{test_metrics['accuracy']:.4f}"
     )
 
     print(
-        f"Precision:    "
+        f"Precision:        "
         f"{test_metrics['precision']:.4f}"
     )
 
     print(
-        f"Sensitivity:  "
+        f"Sensitivity:      "
         f"{test_metrics['sensitivity']:.4f}"
     )
 
     print(
-        f"Specificity:  "
+        f"Specificity:      "
         f"{test_metrics['specificity']:.4f}"
     )
 
     print(
-        f"F1 Score:     "
+        f"F1 Score:         "
         f"{test_metrics['f1']:.4f}"
     )
 
@@ -1030,23 +1215,23 @@ def train_vqc(
     ):
 
         print(
-            f"ROC-AUC:      "
+            f"ROC-AUC:          "
             f"{test_metrics['roc_auc']:.4f}"
         )
 
     else:
 
         print(
-            "ROC-AUC:      N/A"
+            "ROC-AUC:          N/A"
         )
 
     print(
-        f"Training time:   "
+        f"Training time:    "
         f"{training_time:.2f}s"
     )
 
     print(
-        f"Evaluation time: "
+        f"Evaluation time:  "
         f"{evaluation_time:.2f}s"
     )
 
@@ -1066,19 +1251,31 @@ def train_vqc(
 
         "n_qubits": n_qubits,
 
-        "n_layers": n_layers,
+        "n_classes": n_classes,
 
-        "learning_rate": (
+        "classification_type": (
+            classification_type
+        ),
+
+        "classes": (
+            all_classes.tolist()
+        ),
+
+        "n_layers": int(
+            n_layers
+        ),
+
+        "learning_rate": float(
             learning_rate
         ),
 
-        "epochs": epochs,
+        "epochs": int(
+            epochs
+        ),
 
         "metrics": test_metrics,
 
-        "train_metrics": (
-            train_metrics
-        ),
+        "train_metrics": train_metrics,
 
         "training_time": float(
             training_time
@@ -1088,9 +1285,10 @@ def train_vqc(
             evaluation_time
         ),
 
-        "loss_history": (
-            loss_history
-        ),
+        "loss_history": [
+            float(value)
+            for value in loss_history
+        ],
 
         "scaler": scaler,
 
@@ -1104,20 +1302,24 @@ def train_vqc(
 
         "y_test": y_test,
 
-        "train_probabilities": (
-            train_probabilities
+        "train_probabilities": np.asarray(
+            train_probabilities,
+            dtype=float,
         ),
 
-        "test_probabilities": (
-            test_probabilities
+        "test_probabilities": np.asarray(
+            test_probabilities,
+            dtype=float,
         ),
 
-        "train_predictions": (
-            train_predictions
+        "train_predictions": np.asarray(
+            train_predictions,
+            dtype=int,
         ),
 
-        "test_predictions": (
-            test_predictions
+        "test_predictions": np.asarray(
+            test_predictions,
+            dtype=int,
         ),
     }
 
@@ -1141,7 +1343,6 @@ def standalone_test():
     )
 
     if not dataset_path.exists():
-
         raise FileNotFoundError(
             f"Dataset not found: "
             f"{dataset_path}"
@@ -1156,7 +1357,6 @@ def standalone_test():
     )
 
     if "target" not in df.columns:
-
         raise ValueError(
             "Dataset must contain "
             "a 'target' column."
@@ -1169,12 +1369,26 @@ def standalone_test():
     y = df["target"]
 
     # --------------------------------------------------------
+    # Encode target
+    # --------------------------------------------------------
+
+    unique_targets = sorted(
+        y.unique()
+    )
+
+    target_mapping = {
+        value: index
+        for index, value in enumerate(
+            unique_targets
+        )
+    }
+
+    y_encoded = y.map(
+        target_mapping
+    ).astype(int)
+
+    # --------------------------------------------------------
     # Quantum dimensionality reduction
-    #
-    # Standalone demonstration only.
-    #
-    # The integrated platform pipeline will fit
-    # preprocessing only on the training set.
     # --------------------------------------------------------
 
     reducer = QuantumFeatureReducer(
@@ -1203,7 +1417,7 @@ def standalone_test():
 
     result = train_vqc(
         X_quantum,
-        y,
+        y_encoded,
         test_size=DEFAULT_TEST_SIZE,
         random_state=DEFAULT_RANDOM_STATE,
         learning_rate=DEFAULT_LEARNING_RATE,
@@ -1216,11 +1430,11 @@ def standalone_test():
     # --------------------------------------------------------
 
     print()
-    print("=" * 50)
+    print("=" * 60)
     print(
         "STANDALONE VQC TEST COMPLETE"
     )
-    print("=" * 50)
+    print("=" * 60)
 
     print(
         f"Quantum features: "
@@ -1230,6 +1444,16 @@ def standalone_test():
     print(
         f"Qubits: "
         f"{result['n_qubits']}"
+    )
+
+    print(
+        f"Classes: "
+        f"{result['n_classes']}"
+    )
+
+    print(
+        f"Classification: "
+        f"{result['classification_type']}"
     )
 
     print(
@@ -1248,5 +1472,4 @@ def standalone_test():
 # ============================================================
 
 if __name__ == "__main__":
-
     standalone_test()

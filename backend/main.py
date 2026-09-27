@@ -3,12 +3,14 @@ from __future__ import annotations
 import io
 import math
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pennylane as qml
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -628,6 +630,61 @@ def _predict_vqc(
 
 
 # ============================================================
+# REFERENCE DATASET DOWNLOADS
+# ============================================================
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+@app.get("/datasets/heart")
+def download_heart_dataset():
+    """Download the cleaned cardiovascular reference dataset."""
+
+    dataset_path = DATA_DIR / "heart_cleaned.csv"
+
+    if not dataset_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Heart reference dataset is not available on the server.",
+        )
+
+    return FileResponse(
+        path=dataset_path,
+        media_type="text/csv",
+        filename="heart_cleaned.csv",
+    )
+
+
+@app.get("/datasets/breast-cancer")
+def download_breast_cancer_dataset():
+    """Download the headered breast-cancer reference dataset."""
+
+    candidates = (
+        DATA_DIR / "bcancer_fixed.csv",
+        DATA_DIR / "breast_cancer.csv",
+        DATA_DIR / "bcancer.csv",
+    )
+
+    dataset_path = next(
+        (path for path in candidates if path.is_file()),
+        None,
+    )
+
+    if dataset_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Breast-cancer reference dataset is not available on the server.",
+        )
+
+    return FileResponse(
+        path=dataset_path,
+        media_type="text/csv",
+        filename="breast_cancer.csv",
+    )
+
+
+# ============================================================
 # ROOT
 # ============================================================
 
@@ -693,13 +750,13 @@ async def upload_dataset(
 
     raw = await file.read()
 
-    if len(raw) > 10 * 1024 * 1024:
+    if len(raw) > 50 * 1024 * 1024:
 
         raise HTTPException(
             status_code=413,
             detail=(
                 "CSV file is too large. "
-                "Maximum size is 10 MB."
+                "Maximum size is 50 MB."
             ),
         )
 
@@ -804,13 +861,13 @@ async def train_dataset(
 
     raw = await file.read()
 
-    if len(raw) > 10 * 1024 * 1024:
+    if len(raw) > 50 * 1024 * 1024:
 
         raise HTTPException(
             status_code=413,
             detail=(
                 "CSV file is too large. "
-                "Maximum size is 10 MB."
+                "Maximum size is 50 MB."
             ),
         )
 
@@ -1174,6 +1231,44 @@ def predict_dataset(
 
             raise ValueError(
                 "QSVM training result was not found."
+            )
+
+        # Defensive validation: train_quantum() must return the complete
+        # result dictionary, not the raw sklearn SVC object.
+        # The prediction helper needs the QSVM, scaler, and training data.
+        print(
+            "\n[DEBUG] quantum_result type:",
+            type(qsvm_result),
+        )
+
+        if not isinstance(qsvm_result, dict):
+            raise TypeError(
+                "Invalid QSVM artifact: expected the complete "
+                "train_quantum() result dictionary, but received "
+                f"{type(qsvm_result).__name__}. "
+                "The artifact must contain 'qsvm', 'scaler', "
+                "and 'training_data'."
+            )
+
+        print(
+            "[DEBUG] quantum_result keys:",
+            list(qsvm_result.keys()),
+        )
+
+        required_qsvm_keys = {
+            "qsvm",
+            "scaler",
+            "training_data",
+        }
+
+        missing_qsvm_keys = sorted(
+            required_qsvm_keys - set(qsvm_result.keys())
+        )
+
+        if missing_qsvm_keys:
+            raise ValueError(
+                "QSVM training result is incomplete. Missing artifact "
+                f"keys: {missing_qsvm_keys}"
             )
 
         qsvm_prediction = (

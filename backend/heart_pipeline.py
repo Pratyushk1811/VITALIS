@@ -65,8 +65,10 @@ quantum_scaler = joblib.load(
     MODELS_DIR / "quantum_scaler.joblib"
 )
 
-quantum_training_data = joblib.load(
-    MODELS_DIR / "quantum_training_data.joblib"
+quantum_training_data = np.asarray(
+    joblib.load(
+        MODELS_DIR / "quantum_training_data.joblib"
+    )
 )
 
 quantum_training_labels = joblib.load(
@@ -104,9 +106,6 @@ quantum_device = qml.device(
 def quantum_feature_map(x):
     """
     Encode six heart-disease features into six qubits.
-
-    Each feature is encoded using an RY rotation,
-    followed by nearest-neighbour CNOT entanglement.
     """
 
     for qubit in range(N_QUBITS):
@@ -128,19 +127,17 @@ def quantum_feature_map(x):
 @qml.qnode(quantum_device)
 def quantum_state(x):
     quantum_feature_map(x)
-
     return qml.state()
-
-
 # ============================================================
 # QUANTUM KERNEL
 # ============================================================
 
 def quantum_kernel(x1, x2):
     """
-    Fidelity-based quantum kernel:
+    Fidelity-based quantum kernel.
 
-        K(x1, x2) = |<phi(x1)|phi(x2)>|^2
+    Kept for explainability/backward compatibility.
+    QSVM prediction itself uses the optimized cached-state path.
     """
 
     state_1 = quantum_state(x1)
@@ -155,6 +152,51 @@ def quantum_kernel(x1, x2):
         np.abs(overlap) ** 2
     )
 
+# ============================================================
+# CACHED TRAINING QUANTUM STATES
+# ============================================================
+
+_quantum_training_states = None
+
+
+def get_quantum_training_states():
+    """
+    Compute the quantum states of the saved QSVM training
+    samples only once, then reuse them for future predictions.
+    """
+
+    global _quantum_training_states
+
+    if _quantum_training_states is None:
+
+        print(
+            "[VITALIS] Building cached quantum training states..."
+        )
+
+        start = time.perf_counter()
+
+        states = [
+            quantum_state(sample)
+            for sample in quantum_training_data
+        ]
+
+        _quantum_training_states = np.asarray(
+            states,
+            dtype=complex
+        )
+
+        elapsed = (
+            time.perf_counter() - start
+        )
+
+        print(
+            "[VITALIS] Cached "
+            f"{len(_quantum_training_states)} quantum states "
+            f"in {elapsed:.2f}s"
+        )
+
+    return _quantum_training_states
+
 
 # ============================================================
 # QSVM PREDICTION
@@ -162,7 +204,10 @@ def quantum_kernel(x1, x2):
 
 def predict_qsvm(features):
     """
-    Run QSVM inference for one patient.
+    Fast QSVM inference.
+
+    The patient's quantum state is calculated once.
+    Training quantum states are cached and reused.
     """
 
     scaled_features = quantum_scaler.transform(
@@ -171,28 +216,59 @@ def predict_qsvm(features):
 
     patient_features = scaled_features[0]
 
-    kernel_values = [
-        quantum_kernel(
-            patient_features,
-            training_state
-        )
-        for training_state in quantum_training_data
-    ]
+    # --------------------------------------------------------
+    # Patient quantum state: ONLY ONE quantum simulation
+    # --------------------------------------------------------
+
+    patient_state = quantum_state(
+        patient_features
+    )
+
+    # --------------------------------------------------------
+    # Retrieve cached training states
+    # --------------------------------------------------------
+
+    training_states = get_quantum_training_states()
+
+    # --------------------------------------------------------
+    # Vectorized fidelity calculation
+    #
+    # K(x, xi) = |<phi(x) | phi(xi)>|^2
+    # --------------------------------------------------------
+
+    overlaps = (
+        training_states.conj() @ patient_state
+    )
+
+    kernel_vector = (
+        np.abs(overlaps) ** 2
+    )
 
     kernel_vector = np.asarray(
-        kernel_values,
+        kernel_vector,
         dtype=float
     ).reshape(1, -1)
 
+    # --------------------------------------------------------
+    # QSVM prediction
+    # --------------------------------------------------------
+
     prediction = int(
-        qsvm.predict(kernel_vector)[0]
+        qsvm.predict(
+            kernel_vector
+        )[0]
     )
 
     result = {
         "prediction": prediction
     }
 
+    # --------------------------------------------------------
+    # Probability / decision score
+    # --------------------------------------------------------
+
     if hasattr(qsvm, "predict_proba"):
+
         probabilities = qsvm.predict_proba(
             kernel_vector
         )[0]
@@ -206,10 +282,13 @@ def predict_qsvm(features):
         )
 
     elif hasattr(qsvm, "decision_function"):
+
+        decision = qsvm.decision_function(
+            kernel_vector
+        )
+
         result["decision_score"] = float(
-            qsvm.decision_function(
-                kernel_vector
-            )[0]
+            np.asarray(decision).reshape(-1)[0]
         )
 
     return result
@@ -221,13 +300,6 @@ def predict_qsvm(features):
 
 @qml.qnode(quantum_device)
 def vqc_circuit(x, weights):
-    """
-    Heart Disease VQC V2.
-
-    6 qubits
-    3 data-reuploading layers
-    36 trainable parameters
-    """
 
     for layer in range(N_VQC_LAYERS):
 
@@ -236,6 +308,7 @@ def vqc_circuit(x, weights):
         # ----------------------------------------------------
 
         for qubit in range(N_QUBITS):
+
             qml.RY(
                 x[qubit],
                 wires=qubit
@@ -262,6 +335,7 @@ def vqc_circuit(x, weights):
         # ----------------------------------------------------
 
         for qubit in range(N_QUBITS - 1):
+
             qml.CNOT(
                 wires=[qubit, qubit + 1]
             )
@@ -276,9 +350,6 @@ def vqc_circuit(x, weights):
 # ============================================================
 
 def predict_vqc(features):
-    """
-    Run VQC inference for one patient.
-    """
 
     scaled_features = vqc_scaler.transform(
         features
@@ -290,9 +361,6 @@ def predict_vqc(features):
             vqc_weights
         )
     )
-
-    # Convert expectation value [-1, +1]
-    # into class-1 probability [0, 1].
 
     class_1_probability = (
         expectation + 1.0
@@ -326,16 +394,6 @@ def predict_vqc(features):
 # ============================================================
 
 def predict_heart(patient):
-    """
-    Run all five Heart Disease models.
-
-    Models:
-        1. Logistic Regression
-        2. Random Forest
-        3. RBF SVM
-        4. QSVM
-        5. VQC
-    """
 
     total_start = time.perf_counter()
 
@@ -359,7 +417,6 @@ def predict_heart(patient):
             f"Invalid heart disease input: {error}"
         )
 
-
     # ========================================================
     # CLASSICAL PREPROCESSING
     # ========================================================
@@ -367,7 +424,6 @@ def predict_heart(patient):
     scaled_features = classical_scaler.transform(
         features
     )
-
 
     # ========================================================
     # LOGISTIC REGRESSION
@@ -388,10 +444,9 @@ def predict_heart(patient):
     )
 
     print(
-        f"[VITALIS] Logistic Regression: "
+        "[VITALIS] Logistic Regression: "
         f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
-
 
     # ========================================================
     # RANDOM FOREST
@@ -412,10 +467,9 @@ def predict_heart(patient):
     )
 
     print(
-        f"[VITALIS] Random Forest: "
+        "[VITALIS] Random Forest: "
         f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
-
 
     # ========================================================
     # RBF SVM
@@ -436,10 +490,9 @@ def predict_heart(patient):
     )
 
     print(
-        f"[VITALIS] RBF SVM: "
+        "[VITALIS] RBF SVM: "
         f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
-
 
     # ========================================================
     # QSVM
@@ -452,10 +505,9 @@ def predict_heart(patient):
     )
 
     print(
-        f"[VITALIS] QSVM: "
+        "[VITALIS] QSVM: "
         f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
-
 
     # ========================================================
     # VQC
@@ -468,10 +520,9 @@ def predict_heart(patient):
     )
 
     print(
-        f"[VITALIS] VQC: "
+        "[VITALIS] VQC: "
         f"{(time.perf_counter() - start) * 1000:.2f} ms"
     )
-
 
     # ========================================================
     # COLLECT MODEL RESULTS
@@ -514,7 +565,6 @@ def predict_heart(patient):
         "vqc": vqc_result,
     }
 
-
     # ========================================================
     # MODEL CONSENSUS
     # ========================================================
@@ -537,7 +587,6 @@ def predict_heart(patient):
         unified_prediction = 0
         agreeing_models = class_0_count
 
-
     total_models = len(
         model_predictions
     )
@@ -545,7 +594,6 @@ def predict_heart(patient):
     consensus_percentage = (
         agreeing_models / total_models
     ) * 100.0
-
 
     # ========================================================
     # CONSENSUS STATUS
@@ -563,7 +611,6 @@ def predict_heart(patient):
 
         consensus_status = "disagreement"
 
-
     # ========================================================
     # TOTAL TIMING
     # ========================================================
@@ -573,10 +620,9 @@ def predict_heart(patient):
     ) * 1000
 
     print(
-        f"[VITALIS] TOTAL HEART INFERENCE: "
+        "[VITALIS] TOTAL HEART INFERENCE: "
         f"{total_time_ms:.2f} ms"
     )
-
 
     # ========================================================
     # FINAL RESULT
