@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pennylane as qml
 
@@ -614,6 +615,18 @@ def _predict_vqc(
             weights,
         )
     )
+
+    # PennyLane/NumPy may return a one-element array here.
+    # Normalize it before extracting the scalar probability.
+    probabilities = np.asarray(
+        probabilities,
+        dtype=float,
+    ).reshape(-1)
+
+    if probabilities.size == 0:
+        raise ValueError(
+            "VQC returned no probability value."
+        )
 
     probability = float(
         probabilities[0]
