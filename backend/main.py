@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 import pennylane as qml
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -66,6 +72,72 @@ app.add_middleware(
 # ============================================================
 
 TRAINING_SESSIONS: dict[str, dict[str, Any]] = {}
+
+
+def _run_training_in_background(
+    session_id: str,
+    dataframe: pd.DataFrame,
+    target_column: str,
+    quantum_components: int,
+    test_size: float,
+    random_state: int,
+) -> None:
+    """Run the expensive generic training pipeline in the background."""
+
+    session = TRAINING_SESSIONS.get(session_id)
+
+    if session is None:
+        return
+
+    try:
+        print()
+        print("=" * 70)
+        print("VITALIS BACKGROUND TRAINING")
+        print("=" * 70)
+        print(f"Dataset       : {session['filename']}")
+        print(f"Rows          : {len(dataframe)}")
+        print(f"Columns       : {len(dataframe.columns)}")
+        print(f"Target        : {target_column}")
+        print(f"Quantum dims  : {quantum_components}")
+        print(f"Test size     : {test_size}")
+        print(f"Random state  : {random_state}")
+        print("=" * 70)
+
+        result = run_training_pipeline(
+            dataframe,
+            target_column=target_column,
+            quantum_components=quantum_components,
+            test_size=test_size,
+            random_state=random_state,
+        )
+
+        session.update(
+            {
+                "status": "trained",
+                "result": result,
+                "error": None,
+            }
+        )
+
+        print()
+        print("=" * 70)
+        print(f"VITALIS TRAINING COMPLETE: {session_id}")
+        print("=" * 70)
+
+    except Exception as exc:
+        session.update(
+            {
+                "status": "failed",
+                "result": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+
+        print()
+        print("=" * 70)
+        print(f"VITALIS TRAINING FAILED: {session_id}")
+        print(f"{type(exc).__name__}: {exc}")
+        print("=" * 70)
 
 
 # ============================================================
@@ -351,73 +423,67 @@ def _dataset_summary(
 
 
 def _public_training_result(
-    result: dict[str, Any],
+    result: dict[str, Any] | None,
     session_id: str,
     dataframe: pd.DataFrame,
     target_column: str,
+    status: str = "trained",
+    error: str | None = None,
 ) -> dict[str, Any]:
 
-    public = {}
-
-    for key, value in result.items():
-
-        if key == "_artifacts":
-            continue
-
-        public[key] = _json_safe(value)
-
-    artifacts = result.get(
-        "_artifacts",
-        {},
-    )
-
-    selected_features = (
-        artifacts.get(
-            "selected_features"
-        )
-    )
-
-    if selected_features is None:
-
-        selected_features = (
-            result.get(
-                "selected_features"
-            )
-        )
-
-    quantum_features = (
-        artifacts.get(
-            "X_train_quantum"
-        )
-    )
-
-    return {
+    base = {
         "session_id": session_id,
-        "status": "trained",
-
+        "status": status,
         "dataset": {
             "rows": int(len(dataframe)),
             "columns": int(len(dataframe.columns)),
             "target_column": target_column,
         },
-
-        "selected_features": _json_safe(
-            selected_features
-        ),
-
-        "quantum_dimensions": (
-            int(quantum_features.shape[1])
-            if hasattr(
-                quantum_features,
-                "shape",
-            )
-            and len(quantum_features.shape) == 2
-            else None
-        ),
-
-        "training_result": public,
     }
 
+    if status == "training":
+        return base
+
+    if status == "failed":
+        base["error"] = error or "Training failed."
+        return base
+
+    if result is None:
+        base["status"] = "failed"
+        base["error"] = "Training result is unavailable."
+        return base
+
+    public = {}
+
+    for key, value in result.items():
+        if key == "_artifacts":
+            continue
+        public[key] = _json_safe(value)
+
+    artifacts = result.get("_artifacts", {})
+
+    selected_features = artifacts.get("selected_features")
+
+    if selected_features is None:
+        selected_features = result.get("selected_features")
+
+    quantum_features = artifacts.get("X_train_quantum")
+
+    base.update(
+        {
+            "status": "trained",
+            "selected_features": _json_safe(selected_features),
+            "quantum_dimensions": (
+                int(quantum_features.shape[1])
+                if hasattr(quantum_features, "shape")
+                and len(quantum_features.shape) == 2
+                else None
+            ),
+            "training_result": public,
+        }
+    )
+
+    return base
 
 # ============================================================
 # QUANTUM PREDICTION
@@ -816,6 +882,7 @@ async def upload_dataset(
 
 @app.post("/train/dataset")
 async def train_dataset(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     target_column: str | None = None,
     quantum_components: int = 6,
@@ -936,28 +1003,33 @@ async def train_dataset(
 
         print("=" * 70)
 
-        result = run_training_pipeline(
-            dataframe,
-            target_column=target_column,
-            quantum_components=quantum_components,
-            test_size=test_size,
-            random_state=random_state,
-        )
-
         TRAINING_SESSIONS[
             session_id
         ] = {
             "filename": file.filename,
             "dataframe": dataframe,
             "target_column": target_column,
-            "result": result,
+            "result": None,
+            "status": "training",
+            "error": None,
         }
 
+        background_tasks.add_task(
+            _run_training_in_background,
+            session_id,
+            dataframe,
+            target_column,
+            quantum_components,
+            test_size,
+            random_state,
+        )
+
         return _public_training_result(
-            result=result,
+            result=None,
             session_id=session_id,
             dataframe=dataframe,
             target_column=target_column,
+            status="training",
         )
 
     except ValueError as exc:
@@ -1002,10 +1074,12 @@ def get_training_session(
         )
 
     return _public_training_result(
-        result=session["result"],
+        result=session.get("result"),
         session_id=session_id,
         dataframe=session["dataframe"],
         target_column=session["target_column"],
+        status=session.get("status", "trained"),
+        error=session.get("error"),
     )
 
 
