@@ -111,35 +111,95 @@ def quantum_kernel(
     state1 = feature_map(x1)
     state2 = feature_map(x2)
 
-    # Convert quantum states to ordinary NumPy arrays
-    state1 = _to_numpy(
-        state1,
-        dtype=complex,
-    ).reshape(-1)
-
-    state2 = _to_numpy(
-        state2,
-        dtype=complex,
-    ).reshape(-1)
-
-    # Quantum-state overlap
-    overlap = np.vdot(
+    overlap = qml.math.vdot(
         state1,
         state2,
     )
 
-    # Kernel value: |<psi(x1)|psi(x2)>|^2
-    kernel_value = np.abs(
-        overlap
-    ) ** 2
+    kernel_value = (
+        qml.math.abs(overlap) ** 2
+    )
 
-    # Force a genuine Python scalar
     return float(
-        np.asarray(
-            kernel_value
-        ).reshape(-1)[0]
+        _to_numpy(kernel_value)
     )
 
+
+# -------------------------------------------------------------------
+# Quantum-state computation
+# -------------------------------------------------------------------
+
+def _compute_quantum_states(
+    X,
+    feature_map,
+    label="",
+):
+    """
+    Compute the quantum state for every sample exactly once.
+
+    The quantum kernel is:
+
+        K(x, y) = |<psi(x) | psi(y)>|^2
+
+    The previous implementation recomputed the quantum state for
+    every pair of samples.
+
+    For N training samples that resulted in N^2 quantum circuit
+    executions.
+
+    This function computes each state once and lets NumPy perform
+    the pairwise overlap calculation afterward.
+    """
+
+    X = _to_numpy(
+        X,
+        dtype=float,
+    )
+
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+
+    states = []
+
+    start_time = time.time()
+
+    total = X.shape[0]
+
+    for index in range(total):
+
+        state = feature_map(
+            X[index]
+        )
+
+        state = _to_numpy(
+            state,
+            dtype=complex,
+        ).reshape(-1)
+
+        states.append(
+            state
+        )
+
+        elapsed = (
+            time.time()
+            - start_time
+        )
+
+        print(
+            f"Computed {index + 1}/{total} "
+            f"{label} quantum states "
+            f"({elapsed:.1f}s)"
+        )
+
+    if not states:
+        return np.empty(
+            (0, 0),
+            dtype=complex,
+        )
+
+    return np.vstack(
+        states
+    )
 
 
 # -------------------------------------------------------------------
@@ -153,9 +213,18 @@ def build_kernel_matrix(
     n_qubits,
 ):
     """
-    Build a quantum kernel matrix.
+    Build a quantum kernel matrix efficiently.
 
-    K[i,j] = quantum_kernel(X1[i], X2[j])
+    K[i,j] =
+        |<psi(X1[i]) | psi(X2[j])>|^2
+
+    Each quantum state is computed only once.
+
+    The pairwise overlaps are then calculated using NumPy.
+
+    This is mathematically equivalent to repeatedly calling
+    quantum_kernel(), but avoids executing the quantum circuit
+    once for every pair of samples.
     """
 
     X1 = _to_numpy(
@@ -168,49 +237,110 @@ def build_kernel_matrix(
         dtype=float,
     )
 
-    matrix = np.zeros(
-        (
-            X1.shape[0],
-            X2.shape[0],
-        ),
+    if X1.ndim == 1:
+        X1 = X1.reshape(1, -1)
+
+    if X2.ndim == 1:
+        X2 = X2.reshape(1, -1)
+
+    start_time = time.time()
+
+    print(
+        f"Computing quantum states for "
+        f"{X1.shape[0]} samples..."
+    )
+
+    states1 = _compute_quantum_states(
+        X1,
+        feature_map,
+        label="X1",
+    )
+
+    # ---------------------------------------------------------------
+    # If X1 and X2 contain the same samples, reuse the states.
+    #
+    # This is important for:
+    #
+    # K_train = K(X_train, X_train)
+    #
+    # because we do not need to execute the quantum circuit twice.
+    # ---------------------------------------------------------------
+
+    if (
+        X1.shape == X2.shape
+        and np.array_equal(
+            X1,
+            X2,
+        )
+    ):
+
+        states2 = states1
+
+        print(
+            "X1 and X2 are identical; "
+            "reusing quantum states."
+        )
+
+    else:
+
+        print(
+            f"Computing quantum states for "
+            f"{X2.shape[0]} samples..."
+        )
+
+        states2 = _compute_quantum_states(
+            X2,
+            feature_map,
+            label="X2",
+        )
+
+    # ---------------------------------------------------------------
+    # Calculate all quantum-state overlaps.
+    #
+    # For rows:
+    #
+    # states1[i] = psi(X1[i])
+    # states2[j] = psi(X2[j])
+    #
+    # We need:
+    #
+    # <psi_i | psi_j>
+    #
+    # Therefore:
+    #
+    # states1.conj() @ states2.T
+    # ---------------------------------------------------------------
+
+    overlap_matrix = (
+        states1.conj()
+        @ states2.T
+    )
+
+    # ---------------------------------------------------------------
+    # Quantum kernel:
+    #
+    # K(x,y) = |<psi(x)|psi(y)>|^2
+    # ---------------------------------------------------------------
+
+    matrix = np.abs(
+        overlap_matrix
+    ) ** 2
+
+    matrix = np.asarray(
+        matrix,
         dtype=float,
     )
 
-    total = (
-        X1.shape[0]
-        * X2.shape[0]
+    elapsed = (
+        time.time()
+        - start_time
     )
 
-    completed = 0
-    start_time = time.time()
-
-    for i in range(
-        X1.shape[0]
-    ):
-
-        for j in range(
-            X2.shape[0]
-        ):
-
-            matrix[i, j] = quantum_kernel(
-                X1[i],
-                X2[j],
-                feature_map,
-                n_qubits,
-            )
-
-            completed += 1
-
-        elapsed = (
-            time.time()
-            - start_time
-        )
-
-        print(
-            f"Completed {completed}/{total} "
-            f"kernel evaluations "
-            f"({elapsed:.1f}s)"
-        )
+    print(
+        f"Kernel matrix built: "
+        f"{matrix.shape[0]} x {matrix.shape[1]} "
+        f"in {elapsed:.1f}s"
+    )
 
     return matrix
 
@@ -339,15 +469,7 @@ def _metrics(
 
     Everything passed into sklearn is converted to ordinary
     NumPy arrays / Python integers first.
-
-    This is the critical fix for:
-
-        pos_label=tensor(1, requires_grad=True)
     """
-
-    # ---------------------------------------------------------------
-    # Convert everything AWAY from PennyLane tensors
-    # ---------------------------------------------------------------
 
     y_test = _to_numpy(
         y_test,
@@ -390,8 +512,6 @@ def _metrics(
 
     if is_binary:
 
-        # IMPORTANT:
-        # Python int, NOT PennyLane tensor.
         positive_class = int(
             classes[1]
         )
@@ -517,10 +637,6 @@ def _metrics(
     ):
 
         auc = None
-
-    # ---------------------------------------------------------------
-    # Return
-    # ---------------------------------------------------------------
 
     return {
         "accuracy": float(
