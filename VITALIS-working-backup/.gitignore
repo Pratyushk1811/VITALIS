@@ -19,32 +19,3 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
-
-# Python
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ipynb_checkpoints/
-
-# macOS
-.DS_Store
-
-# Local backup
-# VITALIS-working-backup/
-
-# IDE
-.vscode/
-.idea/
-VITALIS-complete.zip
-
-# Figma / generated workspace state
-Cinematic_3D_Landing_Page claude 2/.figma/make/
-
-# Backup / temporary source files
-*.backup
-*.before-table-ui
-*.save
-# Local backup
-# VITALIS-working-backup/
