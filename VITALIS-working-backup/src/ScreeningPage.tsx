@@ -870,144 +870,147 @@ export default function ScreeningPage() {
    * PERSONAL DATASET — TRAIN
    * ============================================================
    */
-
-  const trainDataset =
-    async () => {
-      setPersonalError('')
-
-      if (!file) {
-        setPersonalError(
-          'Upload a CSV dataset first.',
-        )
-
-        return
-      }
-
-      if (!targetColumn) {
-        setPersonalError(
-          'Select the target / label column.',
-        )
-
-        return
-      }
-
-      setTrainingLoading(true)
-
-      try {
-        const formData =
-          new FormData()
-
-        formData.append(
-          'file',
-          file,
-        )
-
-        const query =
-          new URLSearchParams({
-            target_column:
-              targetColumn,
-            quantum_components:
-              String(
-                quantumComponents,
-              ),
-            test_size:
-              String(testSize),
-            random_state:
-              '42',
-          })
-
-        const response =
-          await fetch(
-            `${API}/train/dataset?${query.toString()}`,
-            {
-              method: 'POST',
-              body: formData,
-            },
-          )
-
-        let result: any = {}
-
-        try {
-          result =
-            await response.json()
-        } catch {
-          result = {}
-        }
-
-        if (!response.ok) {
-          throw new Error(
-            result?.detail ||
-              `Training failed (${response.status})`,
-          )
-        }
-
-        const trained =
-          result as TrainingResponse
-
-        setTraining(
-          trained,
-        )
-
-        setSessionId(
-          trained.session_id,
-        )
-
-        const features =
-          trained.selected_features ||
-          []
-
-        setSelectedFeatures(
-          features,
-        )
-
-        const firstRow =
-          preview[0] || {}
-
-        const values:
-          Record<
-            string,
-            unknown
-          > = {}
-
-        for (const feature of features) {
-          values[feature] =
-            firstRow[feature] ??
-            ''
-        }
-
-        setPredictionFeatures(
-          values,
-        )
-
-        try {
-          const benchmarkResult =
-            await jsonApi(
-              `/benchmark/session/${trained.session_id}`,
-            )
-
-          setBenchmark(
-            benchmarkResult as BenchmarkResponse,
-          )
-        } catch {
-          // Benchmark can be loaded after prediction as well.
-        }
-
-        setPersonalStage(
-          'predict',
-        )
-      } catch (error) {
-        setPersonalError(
-          error instanceof Error
-            ? error.message
-            : 'Training failed.',
-        )
-      } finally {
-        setTrainingLoading(
-          false,
-        )
-      }
+    const trainDataset = async () => {
+    if (!file) {
+      setPersonalError('Please select a CSV file first.')
+      return
     }
 
+    if (!targetColumn) {
+      setPersonalError('Please select a target column.')
+      return
+    }
+
+    setPersonalError('')
+    setTrainingLoading(true)
+    setTraining(null)
+    setPrediction(null)
+    setBenchmark(null)
+    setSessionId(null)
+    setSelectedFeatures([])
+    setPredictionFeatures({})
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const query = new URLSearchParams({
+        target_column: targetColumn,
+        quantum_components: String(quantumComponents),
+        test_size: String(testSize),
+        random_state: '42',
+      })
+
+      const response = await fetch(
+        `${API}/train/dataset?${query.toString()}`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+      )
+
+      let result: any = {}
+
+      try {
+        result = await response.json()
+      } catch {
+        result = {}
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          result?.detail ||
+            `Training failed (${response.status})`,
+        )
+      }
+
+      const initial = result as TrainingResponse
+
+      if (!initial.session_id) {
+        throw new Error('Training session was not created.')
+      }
+
+      setSessionId(initial.session_id)
+      setTraining(initial)
+
+      const pollIntervalMs = 2000
+      const maxPolls = 600
+
+      let trained: TrainingResponse | null = null
+
+      for (
+        let attempt = 0;
+        attempt < maxPolls;
+        attempt += 1
+      ) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, pollIntervalMs)
+        })
+
+        const session =
+          (await jsonApi(
+            `/train/session/${initial.session_id}`,
+          )) as TrainingResponse
+
+        setTraining(session)
+
+        if (session.status === 'trained') {
+          trained = session
+          break
+        }
+
+        if (session.status === 'failed') {
+          const errorMessage =
+            (session as any)?.error ||
+            (session as any)?.training_result?.error ||
+            'Training failed.'
+
+          throw new Error(String(errorMessage))
+        }
+      }
+
+      if (!trained) {
+        throw new Error(
+          'Training is taking longer than expected. The backend may still be processing the session.',
+        )
+      }
+
+      const features = trained.selected_features || []
+      setSelectedFeatures(features)
+
+      const firstRow = preview[0] || {}
+      const values: Record<string, unknown> = {}
+
+      for (const feature of features) {
+        values[feature] = firstRow[feature] ?? ''
+      }
+
+      setPredictionFeatures(values)
+
+      try {
+        const benchmarkResult = await jsonApi(
+          `/benchmark/session/${trained.session_id}`,
+        )
+
+        setBenchmark(
+          benchmarkResult as BenchmarkResponse,
+        )
+      } catch {
+        // Benchmark can be loaded after prediction as well.
+      }
+
+      setPersonalStage('predict')
+    } catch (error) {
+      setPersonalError(
+        error instanceof Error
+          ? error.message
+          : 'Training failed.',
+      )
+    } finally {
+      setTrainingLoading(false)
+    }
+  }
+  
   /*
    * ============================================================
    * PERSONAL DATASET — PREDICT
