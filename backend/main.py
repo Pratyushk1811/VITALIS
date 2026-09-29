@@ -187,6 +187,7 @@ class ChatRequest(BaseModel):
     disease: str | None = None
     patient_data: dict[str, Any] | None = None
     prediction_result: dict[str, Any] | None = None
+    explainability_result: dict[str, Any] | None = None
 
 # ============================================================
 # BASIC HELPERS
@@ -1622,27 +1623,14 @@ def benchmark_session(
 # ============================================================
 
 
-@app.post("/explain/dataset")
-def explain_dataset(
-    request: GenericPredictionRequest,
+def _build_dataset_explanation(
+    session_id: str,
+    features: dict,
 ):
-    """
-    Generate model-agnostic local feature influence
-    information for a trained dataset session.
-
-    Uses the same fitted training artifacts as prediction.
-    No model is retrained here.
-    """
-
-    session = TRAINING_SESSIONS.get(
-        request.session_id
-    )
+    session = TRAINING_SESSIONS.get(session_id)
 
     if session is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Training session not found.",
-        )
+        raise ValueError("Training session not found.")
 
     result = session["result"]
     artifacts = result.get("_artifacts", {})
@@ -1655,145 +1643,162 @@ def explain_dataset(
             selected_features = X_train_selected.columns.tolist()
 
     if not selected_features:
-        raise HTTPException(
-            status_code=500,
-            detail="Selected feature information is unavailable.",
+        raise ValueError(
+            "Selected feature information is unavailable."
         )
 
     missing = [
         feature
         for feature in selected_features
-        if feature not in request.features
+        if feature not in features
     ]
 
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail={
+        raise ValueError(
+            {
                 "message": "Missing required features.",
                 "missing_features": missing,
-            },
-        )
-
-    try:
-        sample = pd.DataFrame([
-            {
-                feature: request.features[feature]
-                for feature in selected_features
             }
-        ])
-
-        sample_numeric = sample.apply(
-            pd.to_numeric,
-            errors="raise",
         )
 
-        classical_models = artifacts.get("classical_models")
-        classical_scaler = artifacts.get("classical_scaler")
+    sample = pd.DataFrame([
+        {
+            feature: features[feature]
+            for feature in selected_features
+        }
+    ])
 
-        if not classical_models:
-            raise ValueError("Classical models were not found.")
+    sample_numeric = sample.apply(
+        pd.to_numeric,
+        errors="raise",
+    )
+
+    classical_models = artifacts.get("classical_models")
+    classical_scaler = artifacts.get("classical_scaler")
+
+    if not classical_models:
+        raise ValueError("Classical models were not found.")
+
+    if classical_scaler is not None:
+        sample_scaled = classical_scaler.transform(sample_numeric)
+    else:
+        sample_scaled = sample_numeric
+
+    feature_influence = {}
+
+    logistic_model = classical_models.get("Logistic Regression")
+    if logistic_model is not None:
+        coefficients = logistic_model.coef_[0]
+        feature_influence["Logistic Regression"] = {
+            feature: float(coefficients[index])
+            for index, feature in enumerate(selected_features)
+        }
+
+    random_forest = classical_models.get("Random Forest")
+    if random_forest is not None:
+        importances = random_forest.feature_importances_
+        feature_influence["Random Forest"] = {
+            feature: float(importances[index])
+            for index, feature in enumerate(selected_features)
+        }
+
+    perturbation = {}
+
+    for index, feature in enumerate(selected_features):
+        original_value = float(sample_numeric.iloc[0, index])
+        delta = max(abs(original_value) * 0.05, 0.05)
+
+        lower = sample_numeric.copy()
+        upper = sample_numeric.copy()
+        lower.iloc[0, index] = original_value - delta
+        upper.iloc[0, index] = original_value + delta
 
         if classical_scaler is not None:
-            sample_scaled = classical_scaler.transform(sample_numeric)
+            lower_scaled = classical_scaler.transform(lower)
+            upper_scaled = classical_scaler.transform(upper)
         else:
-            sample_scaled = sample_numeric
+            lower_scaled = lower
+            upper_scaled = upper
 
-        feature_influence = {}
+        model_changes = {}
 
-        logistic_model = classical_models.get("Logistic Regression")
-        if logistic_model is not None:
-            coefficients = logistic_model.coef_[0]
-            feature_influence["Logistic Regression"] = {
-                feature: float(coefficients[index])
-                for index, feature in enumerate(selected_features)
-            }
+        for model_name, model in classical_models.items():
+            if not hasattr(model, "predict_proba"):
+                continue
 
-        random_forest = classical_models.get("Random Forest")
-        if random_forest is not None:
-            importances = random_forest.feature_importances_
-            feature_influence["Random Forest"] = {
-                feature: float(importances[index])
-                for index, feature in enumerate(selected_features)
-            }
-
-        perturbation = {}
-
-        for index, feature in enumerate(selected_features):
-            original_value = float(sample_numeric.iloc[0, index])
-            delta = max(abs(original_value) * 0.05, 0.05)
-
-            lower = sample_numeric.copy()
-            upper = sample_numeric.copy()
-            lower.iloc[0, index] = original_value - delta
-            upper.iloc[0, index] = original_value + delta
-
-            if classical_scaler is not None:
-                lower_scaled = classical_scaler.transform(lower)
-                upper_scaled = classical_scaler.transform(upper)
-            else:
-                lower_scaled = lower
-                upper_scaled = upper
-
-            model_changes = {}
-
-            for model_name, model in classical_models.items():
-                if not hasattr(model, "predict_proba"):
-                    continue
-
-                lower_probability = float(
-                    model.predict_proba(lower_scaled)[0][1]
-                )
-                upper_probability = float(
-                    model.predict_proba(upper_scaled)[0][1]
-                )
-
-                model_changes[model_name] = {
-                    "lower_probability": lower_probability,
-                    "upper_probability": upper_probability,
-                    "change": upper_probability - lower_probability,
-                }
-
-            perturbation[feature] = model_changes
-
-        feature_scores = {}
-
-        for feature, models in perturbation.items():
-            changes = [
-                abs(model_result["change"])
-                for model_result in models.values()
-            ]
-            feature_scores[feature] = (
-                float(sum(changes) / len(changes))
-                if changes
-                else 0.0
+            lower_probability = float(
+                model.predict_proba(lower_scaled)[0][1]
+            )
+            upper_probability = float(
+                model.predict_proba(upper_scaled)[0][1]
             )
 
-        ranked_features = sorted(
-            feature_scores.items(),
-            key=lambda item: item[1],
-            reverse=True,
+            model_changes[model_name] = {
+                "lower_probability": lower_probability,
+                "upper_probability": upper_probability,
+                "change": upper_probability - lower_probability,
+            }
+
+        perturbation[feature] = model_changes
+
+    feature_scores = {}
+
+    for feature, models in perturbation.items():
+        changes = [
+            abs(model_result["change"])
+            for model_result in models.values()
+        ]
+
+        feature_scores[feature] = (
+            float(sum(changes) / len(changes))
+            if changes
+            else 0.0
         )
 
-        return {
-            "session_id": request.session_id,
-            "method": (
-                "Local perturbation sensitivity "
-                "plus model-native feature importance"
-            ),
-            "features": selected_features,
-            "model_native_importance": _json_safe(feature_influence),
-            "local_perturbation": _json_safe(perturbation),
-            "ranked_features": [
-                {"feature": feature, "score": score}
-                for feature, score in ranked_features
-            ],
-            "note": (
-                "Feature influence indicates model sensitivity and "
-                "association with the prediction. It does not establish "
-                "causation or constitute a medical diagnosis."
-            ),
-        }
+    ranked_features = sorted(
+        feature_scores.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    return {
+        "session_id": session_id,
+        "method": (
+            "Local perturbation sensitivity "
+            "plus model-native feature importance"
+        ),
+        "features": selected_features,
+        "model_native_importance": _json_safe(feature_influence),
+        "local_perturbation": _json_safe(perturbation),
+        "ranked_features": [
+            {"feature": feature, "score": score}
+            for feature, score in ranked_features
+        ],
+        "note": (
+            "Feature influence indicates model sensitivity and "
+            "association with the prediction. It does not establish "
+            "causation or constitute a medical diagnosis."
+        ),
+    }
+
+
+@app.post("/explain/dataset")
+def explain_dataset(
+    request: GenericPredictionRequest,
+):
+    """
+    Generate model-agnostic local feature influence
+    information for a trained dataset session.
+
+    Uses the same fitted training artifacts as prediction.
+    No model is retrained here.
+    """
+
+    try:
+        return _build_dataset_explanation(
+            request.session_id,
+            request.features,
+        )
 
     except ValueError as exc:
         raise HTTPException(
@@ -2167,12 +2172,25 @@ def chat_endpoint(
             except Exception:
                 benchmark_context = None
 
+            try:
+                explainability_context = _build_dataset_explanation(
+                    session_id=request.session_id,
+                    features=request.patient_data or {},
+                )
+            except Exception as exc:
+                print(
+                    "[VITALIS] Explainability for chatbot failed:",
+                    type(exc).__name__,
+                    str(exc),
+                )
+                explainability_context = None
+
             explanation = explain_prediction(
                 disease=request.disease,
                 patient_data=request.patient_data or {},
                 prediction_result=request.prediction_result or {},
                 question=question,
-                explainability_result=None,
+                explainability_result=explainability_context,
                 dataset_context=dataset_context,
                 benchmark_context=benchmark_context,
             )
@@ -2215,7 +2233,7 @@ def chat_endpoint(
             patient_data=patient_data,
             prediction_result=prediction_result,
             question=question,
-            explainability_result=None,
+            explainability_result=request.explainability_result,
         )
 
         return {

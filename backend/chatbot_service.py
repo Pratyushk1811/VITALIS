@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -270,35 +271,69 @@ Use the following rules:
 - Do not turn screening predictions into medical diagnoses.
 - Do not claim that quantum models are better unless the supplied results
   actually demonstrate the relevant metric difference.
+- Do not convert the number of models agreeing into a probability.
+- Do not describe majority agreement as an overall disease likelihood unless
+  VITALIS explicitly supplies an ensemble probability.
+- Treat each model's prediction and probability separately.
+- If models disagree, clearly state that they disagree.
+- Do not claim that a majority vote establishes a medical diagnosis or disease
+  likelihood.
 - Do not claim that a feature causes a disease.
 - Keep the answer concise unless the user asks for detail.
 
 Return only the answer to the user.
 """
 
-    response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            "temperature": 0.2,
-            "max_tokens": 300,
-        },
-        timeout=30,
-    )
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens": 500,
+    }
+
+    response = None
+
+    for attempt in range(3):
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+
+        if response.status_code != 429:
+            break
+
+        if attempt < 2:
+            retry_after = response.headers.get("Retry-After")
+
+            try:
+                delay = min(float(retry_after), 10.0)
+            except (TypeError, ValueError):
+                delay = 2.0 * (attempt + 1)
+
+            time.sleep(delay)
+
+    if response is None:
+        return "The VITALIS AI service could not be reached."
+
+    if response.status_code == 429:
+        return (
+            "The VITALIS AI service is temporarily rate-limited. "
+            "Please try again in a few seconds."
+        )
 
     response.raise_for_status()
 
